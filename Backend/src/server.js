@@ -1,9 +1,7 @@
 import express from "express";
-import dotenv from "dotenv";
+import "./config/env.js";
 import pool from "./db/index.js";
 import documentRoutes from "./routes/documentRoutes.js";
-
-dotenv.config();
 
 const app = express();
 

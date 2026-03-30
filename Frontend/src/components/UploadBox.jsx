@@ -1,74 +1,52 @@
 import { useRef } from "react";
 
-function UploadBox({ onFileSelect }) {
+function UploadBox({ onFileSelect, loading }) {
   const fileInputRef = useRef(null);
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      onFileSelect(file);
+  const handleFileChange = (event) => {
+    const selectedFile = event.target.files[0];
+    if (selectedFile) {
+      onFileSelect(selectedFile);
     }
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      onFileSelect(file);
+  const handleDrop = (event) => {
+    event.preventDefault();
+    const droppedFile = event.dataTransfer.files[0];
+    if (droppedFile) {
+      onFileSelect(droppedFile);
     }
   };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
+  const handleDragOver = (event) => {
+    event.preventDefault();
   };
 
   return (
     <div
-      style={styles.box}
-      onClick={() => fileInputRef.current.click()}
+      className={`upload-card${loading ? " is-busy" : ""}`}
+      onClick={() => fileInputRef.current?.click()}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
     >
       <input
+        ref={fileInputRef}
         type="file"
         accept="application/pdf"
-        ref={fileInputRef}
         onChange={handleFileChange}
         style={{ display: "none" }}
       />
 
-      <p style={styles.text}>Drag & drop your PDF here</p>
-      <p style={styles.or}>OR</p>
-      <button style={styles.button}>Upload PDF</button>
+      <div className="upload-dropzone">
+        <div className="upload-icon">PDF</div>
+        <p className="upload-title">Drag and drop your PDF here</p>
+        <p className="upload-copy">or browse from your device to start note generation</p>
+        <button className="upload-button" type="button" disabled={loading}>
+          {loading ? "Processing..." : "Upload PDF"}
+        </button>
+      </div>
     </div>
   );
 }
-
-const styles = {
-  box: {
-    marginTop: "30px",
-    padding: "40px",
-    border: "2px dashed #475569",
-    borderRadius: "12px",
-    textAlign: "center",
-    cursor: "pointer",
-    width: "400px",
-  },
-  text: {
-    marginBottom: "10px",
-  },
-  or: {
-    margin: "10px 0",
-    color: "#94a3b8",
-  },
-  button: {
-    padding: "10px 20px",
-    borderRadius: "8px",
-    border: "none",
-    backgroundColor: "#3b82f6",
-    color: "white",
-    cursor: "pointer",
-  },
-};
 
 export default UploadBox;

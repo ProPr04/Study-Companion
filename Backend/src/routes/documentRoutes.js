@@ -4,19 +4,25 @@ import upload from "../middlewares/uploadMiddleware.js";
 import { extractDocumentText } from "../controllers/documentController.js";
 import { generateNotes } from "../controllers/documentController.js";
 import { getNotesByDocument } from "../controllers/documentController.js";
-
-
-
+import { getAllNotes } from "../controllers/documentController.js";
+import { getAllDocuments } from "../controllers/documentController.js";
+import { deleteDocument } from "../controllers/documentController.js";
+import { generateQuizForDocument } from "../controllers/documentController.js";
+import { authMiddleware } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
 // Upload PDF
-router.post("/upload", upload.single("file"), uploadDocument);
+router.post("/upload",authMiddleware, upload.single("file"), uploadDocument);
 
-router.get("/extract/:id", extractDocumentText);
+router.get("/", authMiddleware, getAllDocuments);
+router.get("/extract/:id",authMiddleware, extractDocumentText);
 
-router.post("/generate-notes/:id", generateNotes);
+router.post("/generate-notes/:id",authMiddleware, generateNotes);
+router.post("/quiz/:id",authMiddleware, generateQuizForDocument);
 
-router.get("/notes/:id", getNotesByDocument);
+router.get("/notes/all",authMiddleware, getAllNotes);
+router.get("/notes/:id", authMiddleware,getNotesByDocument);
+router.delete("/:id",authMiddleware, deleteDocument);
 
 export default router;

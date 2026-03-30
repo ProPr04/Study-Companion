@@ -3,14 +3,19 @@ import { useLocation } from "react-router-dom";
 export default function Navbar({ onMenuClick, onLogout, user }) {
   const location = useLocation();
 
-  const titles = {
-    "/app/notes": "Notes Generator",
-    "/app/notes/list": "Saved Notes",
-    "/app/documents": "Documents",
-    "/app/quiz": "Quiz",
-  };
+  let pageTitle = "Dashboard";
 
-  const pageTitle = titles[location.pathname] ?? "Dashboard";
+  if (location.pathname === "/app/notes") {
+    pageTitle = "Notes Generator";
+  } else if (location.pathname === "/app/notes/list") {
+    pageTitle = "Saved Notes";
+  } else if (location.pathname === "/app/documents") {
+    pageTitle = "Documents";
+  } else if (location.pathname.startsWith("/app/documents/")) {
+    pageTitle = "PDF Viewer";
+  } else if (location.pathname === "/app/quiz") {
+    pageTitle = "Quiz";
+  }
 
   return (
     <header className="dashboard-topbar">

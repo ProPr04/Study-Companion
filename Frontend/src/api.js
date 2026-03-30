@@ -1,8 +1,10 @@
 import apiClient, { setSession } from "./lib/apiClient";
 
-export const uploadPDF = async (file) => {
+export const uploadPDF = async (file, metadata = {}) => {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("className", metadata.className ?? "");
+  formData.append("subject", metadata.subject ?? "");
 
   const res = await apiClient.post("/documents/upload", formData);
   return res.data;
@@ -25,6 +27,14 @@ export const fetchAllNotes = async () => {
 
 export const fetchAllDocuments = async () => {
   const res = await apiClient.get("/documents");
+  return res.data;
+};
+
+export const fetchDocumentFile = async (docId) => {
+  const res = await apiClient.get(`/documents/${docId}/file`, {
+    responseType: "blob",
+  });
+
   return res.data;
 };
 

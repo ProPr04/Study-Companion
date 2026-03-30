@@ -8,6 +8,7 @@ import { getAllNotes } from "../controllers/documentController.js";
 import { getAllDocuments } from "../controllers/documentController.js";
 import { deleteDocument } from "../controllers/documentController.js";
 import { generateQuizForDocument } from "../controllers/documentController.js";
+import { getDocumentFile } from "../controllers/documentController.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
@@ -20,6 +21,7 @@ router.get("/extract/:id",authMiddleware, extractDocumentText);
 
 router.post("/generate-notes/:id",authMiddleware, generateNotes);
 router.post("/quiz/:id",authMiddleware, generateQuizForDocument);
+router.get("/:id/file", authMiddleware, getDocumentFile);
 
 router.get("/notes/all",authMiddleware, getAllNotes);
 router.get("/notes/:id", authMiddleware,getNotesByDocument);

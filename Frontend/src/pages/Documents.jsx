@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { deleteDocumentById, fetchAllDocuments } from "../api";
 import "../App.css";
 
@@ -53,9 +54,14 @@ export default function Documents() {
               keeping the database clean and the lists in sync.
             </p>
           </div>
-          <div className="library-count-card">
-            <p className="app-meta-label">Uploads</p>
-            <p className="library-count-value">{documents.length}</p>
+          <div className="documents-hero-actions">
+            <Link to="/onboarding" className="primary-cta documents-upload-link">
+              Upload more documents
+            </Link>
+            <div className="library-count-card">
+              <p className="app-meta-label">Uploads</p>
+              <p className="library-count-value">{documents.length}</p>
+            </div>
           </div>
         </div>
       </section>
@@ -83,12 +89,32 @@ export default function Documents() {
                 <p className="document-copy">
                   Uploaded {new Date(document.created_at).toLocaleString()}
                 </p>
+                {document.class_name || document.subject ? (
+                  <div className="document-tags">
+                    {document.class_name ? (
+                      <span className="document-tag">Class: {document.class_name}</span>
+                    ) : null}
+                    {document.subject ? (
+                      <span className="document-tag">Subject: {document.subject}</span>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
 
             <div className="document-card-meta">
               <div className="document-meta-pill">
                 {document.notes_count} note{document.notes_count === 1 ? "" : "s"}
+              </div>
+              <div className="document-actions">
+                <Link
+                  to={`/app/documents/${document.id}/view`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="secondary-cta document-view-link"
+                >
+                  View PDF
+                </Link>
               </div>
               <button
                 type="button"

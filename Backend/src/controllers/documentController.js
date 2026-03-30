@@ -4,19 +4,41 @@ import { cleanText, chunkText } from "../utils/textProcessor.js";
 import { generateNotesFromChunk, generateQuizFromText } from "../services/aiService.js";
 import fs from "fs/promises";
 
+let documentMetadataColumnsReady = false;
+
+const ensureDocumentMetadataColumns = async () => {
+  if (documentMetadataColumnsReady) {
+    return;
+  }
+
+  await pool.query(`
+    ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS class_name TEXT,
+    ADD COLUMN IF NOT EXISTS subject TEXT
+  `);
+
+  documentMetadataColumnsReady = true;
+};
+
 export const uploadDocument = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
+    await ensureDocumentMetadataColumns();
+
     const userId = req.user.id;
     const file_name = req.file.originalname;
     const file_path = req.file.path;
+    const class_name = String(req.body?.className ?? "").trim() || null;
+    const subject = String(req.body?.subject ?? "").trim() || null;
 
     const result = await pool.query(
-      "INSERT INTO documents (file_name, file_path, user_id) VALUES ($1, $2, $3) RETURNING *",
-      [file_name, file_path, userId]
+      `INSERT INTO documents (file_name, file_path, user_id, class_name, subject)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [file_name, file_path, userId, class_name, subject]
     );
 
     res.status(201).json({
@@ -168,6 +190,8 @@ export const getAllNotes = async (req, res) => {
 
 export const getAllDocuments = async (req, res) => {
   try {
+    await ensureDocumentMetadataColumns();
+
     const userId = req.user.id;
     const result = await pool.query(`
       SELECT
@@ -186,6 +210,33 @@ export const getAllDocuments = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch documents" });
+  }
+};
+
+export const getDocumentFile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const result = await pool.query(
+      "SELECT id, file_name, file_path FROM documents WHERE id = $1 AND user_id = $2",
+      [id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+
+    const document = result.rows[0];
+    const safeFileName = String(document.file_name ?? "document.pdf").replace(/"/g, "");
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safeFileName}"`);
+
+    return res.sendFile(document.file_path);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to load document file" });
   }
 };
 

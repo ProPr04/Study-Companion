@@ -19,7 +19,7 @@ const Signup = () => {
         password,
       });
 
-      navigate("/app/notes");
+      navigate("/onboarding");
     } catch (signupError) {
       console.error(signupError);
       setError(signupError?.response?.data?.error || "Signup failed");

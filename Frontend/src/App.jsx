@@ -8,6 +8,8 @@ import Documents from "./pages/Documents";
 import Quiz from "./pages/Quiz";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import OnboardingUpload from "./pages/OnboardingUpload";
+import DocumentViewer from "./pages/DocumentViewer";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 
@@ -19,6 +21,14 @@ function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      <Route
+        path="/onboarding"
+        element={
+          <ProtectedRoute>
+            <OnboardingUpload />
+          </ProtectedRoute>
+        }
+      />
 
       {/* App layout with sidebar */}
       <Route path="/app" element={
@@ -29,6 +39,7 @@ function App() {
         <Route path="notes" element={<Notes />} />
         <Route path="notes/list" element={<NotesList />} />
         <Route path="documents" element={<Documents />} />
+        <Route path="documents/:id/view" element={<DocumentViewer />} />
         <Route path="quiz" element={<Quiz />} />
       </Route>
     </Routes>

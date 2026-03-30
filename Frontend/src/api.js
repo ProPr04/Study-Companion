@@ -43,8 +43,13 @@ export const deleteDocumentById = async (docId) => {
   return res.data;
 };
 
-export const generateQuizForDocument = async (docId) => {
-  const res = await apiClient.post(`/documents/quiz/${docId}`);
+export const generateQuizForDocument = async (docId, difficulty, questionCount) => {
+  const res = await apiClient.post(`/documents/quiz/${docId}`, { difficulty, questionCount });
+  return res.data;
+};
+
+export const saveQuizResult = async (docId, payload) => {
+  const res = await apiClient.post(`/documents/quiz/${docId}/result`, payload);
   return res.data;
 };
 

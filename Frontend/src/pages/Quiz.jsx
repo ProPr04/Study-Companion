@@ -1,16 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchAllDocuments, generateQuizForDocument } from "../api";
+import { fetchAllDocuments, generateQuizForDocument, saveQuizResult } from "../api";
 import "../App.css";
+
+const difficultyOptions = [
+  { value: "easy", label: "Easy" },
+  { value: "moderate", label: "Moderate" },
+  { value: "advanced", label: "Advanced" },
+];
 
 export default function Quiz() {
   const [documents, setDocuments] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [quizLoading, setQuizLoading] = useState(false);
+  const [resultSaving, setResultSaving] = useState(false);
   const [selectedDocumentId, setSelectedDocumentId] = useState(null);
+  const [selectedDifficulty, setSelectedDifficulty] = useState("moderate");
+  const [questionCount, setQuestionCount] = useState("10");
   const [quizData, setQuizData] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [resultSaved, setResultSaved] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -69,19 +79,36 @@ export default function Quiz() {
       return;
     }
 
+    const parsedQuestionCount = Number(questionCount);
+
+    if (!Number.isInteger(parsedQuestionCount) || parsedQuestionCount < 1) {
+      setError("Please enter a valid number of questions.");
+      return;
+    }
+
+    if (parsedQuestionCount > 15) {
+      setError("Only 15 questions can be created at once.");
+      return;
+    }
+
     setQuizLoading(true);
     setError("");
     setQuizData(null);
     setAnswers({});
     setCurrentQuestionIndex(0);
     setIsSubmitted(false);
+    setResultSaved(false);
 
     try {
-      const res = await generateQuizForDocument(selectedDocumentId);
+      const res = await generateQuizForDocument(
+        selectedDocumentId,
+        selectedDifficulty,
+        parsedQuestionCount
+      );
       setQuizData(res.quiz);
     } catch (quizError) {
       console.error(quizError);
-      setError("Could not generate the quiz right now.");
+      setError(quizError?.response?.data?.error || "Could not generate the quiz right now.");
     } finally {
       setQuizLoading(false);
     }
@@ -98,14 +125,49 @@ export default function Quiz() {
     }));
   };
 
-  const handleSubmitQuiz = () => {
-    setIsSubmitted(true);
+  const handleSubmitQuiz = async () => {
+    if (!quizData) {
+      return;
+    }
+
+    let correctCount = 0;
+
+    quizData.questions.forEach((question) => {
+      if (answers[question.id] === question.correctAnswer) {
+        correctCount += 1;
+      }
+    });
+
+    const totalQuestions = quizData.questions.length;
+    const percentage = Math.round((correctCount / totalQuestions) * 100);
+
+    setResultSaving(true);
+    setError("");
+
+    try {
+      await saveQuizResult(selectedDocumentId, {
+        score: correctCount,
+        totalQuestions,
+        percentage,
+        difficulty: quizData.difficulty ?? selectedDifficulty,
+      });
+
+      setResultSaved(true);
+      setIsSubmitted(true);
+    } catch (saveError) {
+      console.error(saveError);
+      setError("Quiz finished, but the score could not be saved.");
+      setIsSubmitted(true);
+    } finally {
+      setResultSaving(false);
+    }
   };
 
   const handleResetQuiz = () => {
     setAnswers({});
     setCurrentQuestionIndex(0);
     setIsSubmitted(false);
+    setResultSaved(false);
   };
 
   return (
@@ -116,13 +178,13 @@ export default function Quiz() {
           <div>
             <h1 className="app-title">Create a quiz directly from an uploaded document.</h1>
             <p className="app-subtitle">
-              Choose one upload, let Groq build a focused 10-question test from it,
+              Choose one upload, set the difficulty and question count, let Groq build the test from it,
               then complete the quiz in an interactive session with a final scorecard.
             </p>
           </div>
           <div className="library-count-card">
             <p className="app-meta-label">Question Set</p>
-            <p className="library-count-value">{quizData?.questions?.length ?? 10}</p>
+            <p className="library-count-value">{quizData?.questions?.length ?? (Number(questionCount) || 10)}</p>
           </div>
         </div>
       </section>
@@ -155,13 +217,44 @@ export default function Quiz() {
             ))}
           </div>
 
+          <div className="quiz-difficulty-card">
+            <p className="app-meta-label">2. Select difficulty</p>
+            <div className="quiz-difficulty-list">
+              {difficultyOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`quiz-difficulty-button${selectedDifficulty === option.value ? " is-active" : ""}`}
+                  onClick={() => setSelectedDifficulty(option.value)}
+                  disabled={quizLoading}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="quiz-count-card">
+            <p className="app-meta-label">3. Number of questions</p>
+            <input
+              className="quiz-count-input"
+              type="number"
+              min="1"
+              max="15"
+              value={questionCount}
+              onChange={(event) => setQuestionCount(event.target.value)}
+              disabled={quizLoading}
+            />
+            <p className="quiz-count-copy">Maximum 15 questions per quiz.</p>
+          </div>
+
           <button
             type="button"
             className="primary-cta"
             onClick={handleGenerateQuiz}
             disabled={!selectedDocumentId || quizLoading || documentsLoading}
           >
-            {quizLoading ? "Generating Quiz..." : "Generate 10-Question Quiz"}
+            {quizLoading ? "Generating Quiz..." : "Generate Quiz"}
           </button>
         </section>
 
@@ -186,6 +279,14 @@ export default function Quiz() {
                   You scored {scoreSummary.percentage}% on this quiz generated from{" "}
                   {selectedDocument?.file_name ?? "the selected document"}.
                 </p>
+                <div className="quiz-results-meta">
+                  <span className="preview-chip">
+                    Difficulty: {quizData.difficulty ?? selectedDifficulty}
+                  </span>
+                  <span className={`preview-chip${resultSaved ? "" : " preview-chip-warning"}`}>
+                    {resultSaved ? "Score saved" : "Score not saved"}
+                  </span>
+                </div>
               </div>
 
               <button type="button" className="primary-cta" onClick={handleResetQuiz}>
@@ -224,7 +325,7 @@ export default function Quiz() {
                   <p className="preview-copy">{quizData.description}</p>
                 </div>
                 <div className="preview-chip">
-                  Question {currentQuestionIndex + 1} / {totalQuestions}
+                  {quizData.difficulty ?? selectedDifficulty} | Question {currentQuestionIndex + 1} / {totalQuestions}
                 </div>
               </div>
 
@@ -272,8 +373,9 @@ export default function Quiz() {
                         type="button"
                         className="primary-cta"
                         onClick={handleSubmitQuiz}
+                        disabled={resultSaving}
                       >
-                        Finish Quiz
+                        {resultSaving ? "Saving Score..." : "Finish Quiz"}
                       </button>
                     ) : (
                       <button

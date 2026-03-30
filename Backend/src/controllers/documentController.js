@@ -5,6 +5,7 @@ import { generateNotesFromChunk, generateQuizFromText } from "../services/aiServ
 import fs from "fs/promises";
 
 let documentMetadataColumnsReady = false;
+let quizResultsTableReady = false;
 
 const ensureDocumentMetadataColumns = async () => {
   if (documentMetadataColumnsReady) {
@@ -18,6 +19,27 @@ const ensureDocumentMetadataColumns = async () => {
   `);
 
   documentMetadataColumnsReady = true;
+};
+
+const ensureQuizResultsTable = async () => {
+  if (quizResultsTableReady) {
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS quiz_results (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      document_id INTEGER NOT NULL,
+      difficulty TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      total_questions INTEGER NOT NULL,
+      percentage INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  quizResultsTableReady = true;
 };
 
 export const uploadDocument = async (req, res) => {
@@ -301,6 +323,16 @@ export const generateQuizForDocument = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
+    const difficulty = String(req.body?.difficulty ?? "moderate").trim().toLowerCase();
+    const questionCount = Number(req.body?.questionCount ?? 10);
+
+    if (!Number.isInteger(questionCount) || questionCount < 1) {
+      return res.status(400).json({ error: "Please choose at least 1 question." });
+    }
+
+    if (questionCount > 15) {
+      return res.status(400).json({ error: "Only 15 questions can be created at once." });
+    }
 
     const result = await pool.query(
       "SELECT * FROM documents WHERE id = $1 AND user_id = $2",
@@ -321,7 +353,7 @@ export const generateQuizForDocument = async (req, res) => {
       });
     }
 
-    const quiz = await generateQuizFromText(cleanedText);
+    const quiz = await generateQuizFromText(cleanedText, difficulty, questionCount);
 
     res.json({
       message: "Quiz generated successfully",
@@ -334,5 +366,50 @@ export const generateQuizForDocument = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to generate quiz" });
+  }
+};
+
+export const saveQuizResult = async (req, res) => {
+  try {
+    await ensureQuizResultsTable();
+
+    const { id } = req.params;
+    const userId = req.user.id;
+    const score = Number(req.body?.score);
+    const totalQuestions = Number(req.body?.totalQuestions);
+    const percentage = Number(req.body?.percentage);
+    const difficulty = String(req.body?.difficulty ?? "moderate").trim().toLowerCase() || "moderate";
+
+    if (!Number.isInteger(score) || !Number.isInteger(totalQuestions) || totalQuestions <= 0) {
+      return res.status(400).json({ error: "Invalid quiz result payload" });
+    }
+
+    const result = await pool.query(
+      "SELECT id FROM documents WHERE id = $1 AND user_id = $2",
+      [id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+
+    const safePercentage = Number.isInteger(percentage)
+      ? percentage
+      : Math.round((score / totalQuestions) * 100);
+
+    const saveResult = await pool.query(
+      `INSERT INTO quiz_results (user_id, document_id, difficulty, score, total_questions, percentage)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [userId, id, difficulty, score, totalQuestions, safePercentage]
+    );
+
+    res.status(201).json({
+      message: "Quiz result saved successfully",
+      result: saveResult.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to save quiz result" });
   }
 };

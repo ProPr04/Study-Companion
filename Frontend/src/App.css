@@ -813,6 +813,13 @@
   overflow: auto;
   margin-bottom: 18px;
   padding-right: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-history::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .chat-thread {
@@ -824,6 +831,8 @@
   padding: 18px;
   border-radius: 20px;
   border: 1px solid rgba(148, 163, 184, 0.12);
+  display: grid;
+  gap: 12px;
 }
 
 .chat-message-user {
@@ -864,6 +873,17 @@
   line-height: 1.7;
 }
 
+.chat-message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chat-action-button {
+  text-decoration: none;
+}
+
 .chat-input-form {
   display: grid;
   gap: 14px;
@@ -892,6 +912,10 @@
   color: #94a3b8;
   font-size: 0.92rem;
   line-height: 1.6;
+}
+
+.chat-retry-button {
+  width: fit-content;
 }
 
 .quiz-layout {
@@ -1339,6 +1363,10 @@
   .chat-form-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .chat-message-actions {
+    justify-content: stretch;
   }
 
   .topbar-right {

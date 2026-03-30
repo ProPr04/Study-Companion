@@ -274,3 +274,95 @@ export const answerQuestionWithContext = async ({ question, chunks }) => {
     throw new Error("Chat answer generation failed");
   }
 };
+
+const refinePromptTemplates = {
+  simplify: ({ context, answer }) => `You are a study assistant. Simplify the following explanation further so a beginner can understand it.
+
+Rules:
+- Use very simple language
+- Short sentences
+- Avoid jargon
+- Use bullet points if needed
+- Answer ONLY using the provided context
+- If context is insufficient, say "Not enough information in the document"
+
+CONTEXT:
+${context}
+
+ORIGINAL ANSWER:
+${answer}
+
+SIMPLIFIED VERSION:`,
+  analogy: ({ context, answer }) => `You are a study assistant. Explain the concept using a real-world analogy.
+
+Rules:
+- Use relatable real-life examples
+- Keep it intuitive
+- Do not lose core meaning
+- Answer ONLY using the provided context
+- If context is insufficient, say "Not enough information in the document"
+
+CONTEXT:
+${context}
+
+ORIGINAL ANSWER:
+${answer}
+
+ANALOGY EXPLANATION:`,
+  deeper: ({ context, answer }) => `You are a study assistant. Expand the explanation in more depth.
+
+Rules:
+- Add more details and reasoning
+- Explain underlying concepts
+- Keep it structured
+- Answer ONLY using the provided context
+- If context is insufficient, say "Not enough information in the document"
+
+CONTEXT:
+${context}
+
+ORIGINAL ANSWER:
+${answer}
+
+DETAILED EXPLANATION:`,
+};
+
+export const refineAnswerWithContext = async ({ type, answer, chunks }) => {
+  try {
+    const normalizedType = String(type ?? "").trim().toLowerCase();
+    const promptBuilder = refinePromptTemplates[normalizedType];
+
+    if (!promptBuilder) {
+      throw new Error("Invalid refine type");
+    }
+
+    const context = chunks
+      .map((chunk, index) => `Source ${index + 1}:\n${chunk.content}`)
+      .join("\n\n")
+      .slice(0, 12000);
+
+    const response = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      temperature: 0.3,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Transform the original answer using only the provided context. If context is not enough, say \"Not enough information in the document\".",
+        },
+        {
+          role: "user",
+          content: promptBuilder({
+            context,
+            answer: String(answer ?? "").trim(),
+          }),
+        },
+      ],
+    });
+
+    return response.choices?.[0]?.message?.content?.trim() ?? "Not enough information in the document";
+  } catch (error) {
+    console.error("Groq refine error:", error);
+    throw new Error("Follow-up refinement failed");
+  }
+};

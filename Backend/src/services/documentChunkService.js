@@ -35,6 +35,16 @@ const STOP_WORDS = new Set([
   "with",
 ]);
 
+const SUMMARY_INTENT_KEYWORDS = [
+  "summary",
+  "summarize",
+  "overview",
+  "gist",
+  "brief",
+  "explain",
+  "describe",
+];
+
 export const ensureDocumentChunksTable = async () => {
   if (documentChunksTableReady) {
     return;
@@ -71,6 +81,11 @@ const scoreChunk = (questionTokens, chunkContent) => {
     const exactMatches = chunkTextValue.split(token).length - 1;
     return score + exactMatches;
   }, 0);
+};
+
+const hasSummaryIntent = (question) => {
+  const normalizedQuestion = String(question ?? "").toLowerCase();
+  return SUMMARY_INTENT_KEYWORDS.some((keyword) => normalizedQuestion.includes(keyword));
 };
 
 export const syncDocumentChunks = async (document) => {
@@ -173,6 +188,31 @@ export const findRelevantChunks = async ({
     .filter((chunk) => chunk.relevance > 0)
     .sort((left, right) => right.relevance - left.relevance)
     .slice(0, limit);
+
+  if (rankedChunks.length > 0) {
+    return rankedChunks;
+  }
+
+  if (result.rows.length === 0) {
+    return [];
+  }
+
+  if (documentId || questionTokens.length === 0 || hasSummaryIntent(question)) {
+    return result.rows
+      .slice()
+      .sort((left, right) => {
+        if (left.document_id !== right.document_id) {
+          return left.document_id - right.document_id;
+        }
+
+        return left.id - right.id;
+      })
+      .slice(0, limit)
+      .map((chunk) => ({
+        ...chunk,
+        relevance: 0,
+      }));
+  }
 
   return rankedChunks;
 };

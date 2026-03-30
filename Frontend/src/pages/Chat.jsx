@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { askChatQuestion, fetchAllDocuments } from "../api";
+import { askChatQuestion, fetchAllDocuments, refineChatAnswer } from "../api";
 import "../App.css";
+
+const refineActions = [
+  { type: "simplify", label: "Simplify More" },
+  { type: "analogy", label: "Give Analogy" },
+  { type: "deeper", label: "Go Deeper" },
+];
 
 export default function Chat() {
   const [documents, setDocuments] = useState([]);
@@ -10,6 +16,8 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [error, setError] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [refiningState, setRefiningState] = useState({ messageId: null, type: "" });
+  const [retryRefinePayload, setRetryRefinePayload] = useState(null);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -56,6 +64,7 @@ export default function Chat() {
     setMessages((currentMessages) => [...currentMessages, nextUserMessage]);
     setQuestion("");
     setError("");
+    setRetryRefinePayload(null);
     setIsSending(true);
 
     try {
@@ -71,6 +80,8 @@ export default function Chat() {
           role: "assistant",
           content: res.answer,
           sources: Array.isArray(res.sources) ? res.sources : [],
+          question: trimmedQuestion,
+          documentId: selectedDocumentId === "all" ? null : Number(selectedDocumentId),
         },
       ]);
     } catch (sendError) {
@@ -78,6 +89,46 @@ export default function Chat() {
       setError(sendError?.response?.data?.error || "Could not get an answer right now.");
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleRefine = async ({ message, type }) => {
+    if (!message?.content || !message?.question) {
+      return;
+    }
+
+    const payload = {
+      type,
+      question: message.question,
+      answer: message.content,
+      documentId: message.documentId ?? undefined,
+    };
+
+    setError("");
+    setRetryRefinePayload(null);
+    setRefiningState({ messageId: message.id, type });
+
+    try {
+      const res = await refineChatAnswer(payload);
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: `assistant-refine-${Date.now()}`,
+          role: "assistant",
+          content: res.answer,
+          sources: Array.isArray(res.sources) ? res.sources : [],
+          question: message.question,
+          documentId: message.documentId ?? null,
+          refinementType: type,
+        },
+      ]);
+    } catch (refineError) {
+      console.error(refineError);
+      setError(refineError?.response?.data?.error || "Could not refine the answer right now.");
+      setRetryRefinePayload({ message, type });
+    } finally {
+      setRefiningState({ messageId: null, type: "" });
     }
   };
 
@@ -102,6 +153,16 @@ export default function Chat() {
 
       {documentsLoading ? <div className="status-banner warning">Preparing your chat workspace...</div> : null}
       {error ? <div className="status-banner error">{error}</div> : null}
+      {retryRefinePayload ? (
+        <button
+          type="button"
+          className="secondary-cta chat-retry-button"
+          onClick={() => handleRefine(retryRefinePayload)}
+          disabled={Boolean(refiningState.messageId)}
+        >
+          Retry last follow-up
+        </button>
+      ) : null}
 
       <div className="chat-layout">
         <section className="app-panel chat-sidebar-card">
@@ -165,6 +226,32 @@ export default function Chat() {
                             <p>{source.excerpt}</p>
                           </div>
                         ))}
+                      </div>
+                    ) : null}
+                    {message.role === "assistant" ? (
+                      <div className="chat-message-actions">
+                        {refineActions.map((action) => {
+                          const isLoading =
+                            refiningState.messageId === message.id &&
+                            refiningState.type === action.type;
+
+                          return (
+                            <button
+                              key={`${message.id}-${action.type}`}
+                              type="button"
+                              className="secondary-cta chat-action-button"
+                              onClick={() => handleRefine({ message, type: action.type })}
+                              disabled={
+                                isSending ||
+                                Boolean(refiningState.messageId) ||
+                                !message.content ||
+                                !message.question
+                              }
+                            >
+                              {isLoading ? "Loading..." : action.label}
+                            </button>
+                          );
+                        })}
                       </div>
                     ) : null}
                   </article>

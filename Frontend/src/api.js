@@ -58,6 +58,11 @@ export const askChatQuestion = async (payload) => {
   return res.data;
 };
 
+export const refineChatAnswer = async (payload) => {
+  const res = await apiClient.post("/chat/refine", payload);
+  return res.data;
+};
+
 export const loginUser = async (credentials) => {
   const res = await apiClient.post("/auth/login", credentials);
   setSession(res.data);

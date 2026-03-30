@@ -53,6 +53,11 @@ export const saveQuizResult = async (docId, payload) => {
   return res.data;
 };
 
+export const askChatQuestion = async (payload) => {
+  const res = await apiClient.post("/chat/ask", payload);
+  return res.data;
+};
+
 export const loginUser = async (credentials) => {
   const res = await apiClient.post("/auth/login", credentials);
   setSession(res.data);

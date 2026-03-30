@@ -4,6 +4,7 @@ import "./config/env.js";
 import pool from "./db/index.js";
 import documentRoutes from "./routes/documentRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import chatRoutes from "./routes/chatRoutes.js";
 
 const PORT = process.env.PORT || 5000;
 const app = express();
@@ -15,6 +16,7 @@ app.use(express.json());
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/documents", documentRoutes);
+app.use("/api/chat", chatRoutes);
 
 // Test route
 app.get("/", async (req, res) => {

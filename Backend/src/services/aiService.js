@@ -244,3 +244,33 @@ export const generateLevelBasedResponse = async ({
     throw new Error("Adaptive response generation failed");
   }
 };
+
+export const answerQuestionWithContext = async ({ question, chunks }) => {
+  try {
+    const context = chunks
+      .map((chunk, index) => `Source ${index + 1}:\n${chunk.content}`)
+      .join("\n\n")
+      .slice(0, 12000);
+
+    const response = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a study assistant. Answer only from the provided context. If the answer is not in the context, say \"I don't know based on the provided documents.\"",
+        },
+        {
+          role: "user",
+          content: `CONTEXT:\n${context}\n\nQUESTION: ${String(question ?? "").trim()}`,
+        },
+      ],
+    });
+
+    return response.choices?.[0]?.message?.content?.trim() ?? "I don't know based on the provided documents.";
+  } catch (error) {
+    console.error("Groq chat error:", error);
+    throw new Error("Chat answer generation failed");
+  }
+};

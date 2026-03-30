@@ -1,0 +1,209 @@
+import { useEffect, useRef, useState } from "react";
+import { askChatQuestion, fetchAllDocuments } from "../api";
+import "../App.css";
+
+export default function Chat() {
+  const [documents, setDocuments] = useState([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [selectedDocumentId, setSelectedDocumentId] = useState("all");
+  const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [error, setError] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    const loadDocuments = async () => {
+      try {
+        const res = await fetchAllDocuments();
+        setDocuments(Array.isArray(res?.documents) ? res.documents : []);
+      } catch (loadError) {
+        console.error(loadError);
+        setError("Unable to load your uploaded documents for chat.");
+      } finally {
+        setDocumentsLoading(false);
+      }
+    };
+
+    loadDocuments();
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isSending]);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    const trimmedQuestion = question.trim();
+
+    if (!trimmedQuestion) {
+      setError("Enter a question before sending.");
+      return;
+    }
+
+    if (documents.length === 0) {
+      setError("Upload at least one document before starting chat.");
+      return;
+    }
+
+    const nextUserMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: trimmedQuestion,
+    };
+
+    setMessages((currentMessages) => [...currentMessages, nextUserMessage]);
+    setQuestion("");
+    setError("");
+    setIsSending(true);
+
+    try {
+      const res = await askChatQuestion({
+        question: trimmedQuestion,
+        documentId: selectedDocumentId === "all" ? undefined : Number(selectedDocumentId),
+      });
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: res.answer,
+          sources: Array.isArray(res.sources) ? res.sources : [],
+        },
+      ]);
+    } catch (sendError) {
+      console.error(sendError);
+      setError(sendError?.response?.data?.error || "Could not get an answer right now.");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <div className="chat-page">
+      <section className="app-panel notes-library-hero">
+        <span className="app-eyebrow">Study Chat</span>
+        <div className="notes-library-header">
+          <div>
+            <h1 className="app-title">Ask questions about your own uploaded study material.</h1>
+            <p className="app-subtitle">
+              This assistant answers only from the context retrieved from your uploaded
+              PDFs. If the answer is not found in those documents, it should say so.
+            </p>
+          </div>
+          <div className="library-count-card">
+            <p className="app-meta-label">Available Docs</p>
+            <p className="library-count-value">{documents.length}</p>
+          </div>
+        </div>
+      </section>
+
+      {documentsLoading ? <div className="status-banner warning">Preparing your chat workspace...</div> : null}
+      {error ? <div className="status-banner error">{error}</div> : null}
+
+      <div className="chat-layout">
+        <section className="app-panel chat-sidebar-card">
+          <div className="quiz-sidebar-header">
+            <h2 className="preview-title">Document scope</h2>
+            <p className="preview-copy">
+              Ask across all uploads or narrow the chat to one specific document.
+            </p>
+          </div>
+
+          <label className="chat-filter-field">
+            <span className="app-meta-label">Search scope</span>
+            <select
+              className="chat-select"
+              value={selectedDocumentId}
+              onChange={(event) => setSelectedDocumentId(event.target.value)}
+              disabled={documentsLoading || isSending || documents.length === 0}
+            >
+              <option value="all">All documents</option>
+              {documents.map((document) => (
+                <option key={document.id} value={String(document.id)}>
+                  {document.file_name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {documents.length === 0 && !documentsLoading ? (
+            <div className="status-banner warning">
+              No documents uploaded yet. Add a PDF first to start chat.
+            </div>
+          ) : null}
+        </section>
+
+        <section className="app-panel chat-main-card">
+          <div className="chat-history">
+            {messages.length === 0 ? (
+              <div className="notes-placeholder">
+                <div>
+                  <strong>Your study chat will appear here.</strong>
+                  Ask about a concept, definition, formula, or summary from your uploaded documents.
+                </div>
+              </div>
+            ) : (
+              <div className="chat-thread">
+                {messages.map((message) => (
+                  <article
+                    key={message.id}
+                    className={`chat-message chat-message-${message.role}`}
+                  >
+                    <p className="app-meta-label">
+                      {message.role === "user" ? "You" : "Study Assistant"}
+                    </p>
+                    <div className="chat-message-copy">{message.content}</div>
+                    {message.role === "assistant" && message.sources?.length ? (
+                      <div className="chat-sources">
+                        <p className="app-meta-label">Sources</p>
+                        {message.sources.map((source) => (
+                          <div key={`${message.id}-${source.id}`} className="chat-source-card">
+                            <strong>{source.fileName}</strong>
+                            <p>{source.excerpt}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+                {isSending ? (
+                  <article className="chat-message chat-message-assistant">
+                    <p className="app-meta-label">Study Assistant</p>
+                    <div className="chat-message-copy">Searching your documents and drafting an answer...</div>
+                  </article>
+                ) : null}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </div>
+
+          <form className="chat-input-form" onSubmit={handleSubmit}>
+            <textarea
+              className="chat-input"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder="Ask a question about your uploaded documents..."
+              rows={4}
+              disabled={isSending || documents.length === 0}
+            />
+            <div className="chat-form-actions">
+              <p className="chat-form-copy">
+                The model will answer only from retrieved document context.
+              </p>
+              <button
+                type="submit"
+                className="primary-cta"
+                disabled={isSending || documents.length === 0}
+              >
+                {isSending ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </div>
+  );
+}

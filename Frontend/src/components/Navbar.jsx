@@ -15,6 +15,8 @@ export default function Navbar({ onMenuClick, onLogout, user }) {
     pageTitle = "PDF Viewer";
   } else if (location.pathname === "/app/quiz") {
     pageTitle = "Quiz";
+  } else if (location.pathname === "/app/chat") {
+    pageTitle = "Study Chat";
   }
 
   return (

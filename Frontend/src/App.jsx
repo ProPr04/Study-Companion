@@ -10,6 +10,7 @@ import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import OnboardingUpload from "./pages/OnboardingUpload";
 import DocumentViewer from "./pages/DocumentViewer";
+import Chat from "./pages/Chat";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 
@@ -41,6 +42,7 @@ function App() {
         <Route path="documents" element={<Documents />} />
         <Route path="documents/:id/view" element={<DocumentViewer />} />
         <Route path="quiz" element={<Quiz />} />
+        <Route path="chat" element={<Chat />} />
       </Route>
     </Routes>
   );

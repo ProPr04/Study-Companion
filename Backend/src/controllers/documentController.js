@@ -2,6 +2,7 @@ import pool from "../db/index.js";
 import { extractTextFromPDF } from "../utils/pdfParser.js";
 import { cleanText, chunkText } from "../utils/textProcessor.js";
 import { generateNotesFromChunk, generateQuizFromText } from "../services/aiService.js";
+import { ensureDocumentChunksTable, syncDocumentChunks } from "../services/documentChunkService.js";
 import fs from "fs/promises";
 
 let documentMetadataColumnsReady = false;
@@ -62,6 +63,8 @@ export const uploadDocument = async (req, res) => {
        RETURNING *`,
       [file_name, file_path, userId, class_name, subject]
     );
+
+    await syncDocumentChunks(result.rows[0]);
 
     res.status(201).json({
       message: "File uploaded successfully",
@@ -283,8 +286,15 @@ export const deleteDocument = async (req, res) => {
 
     const document = documentResult.rows[0];
 
+    await ensureDocumentChunksTable();
+
     const deletedNotesResult = await client.query(
       "DELETE FROM notes WHERE document_id = $1 AND user_id = $2 RETURNING id",
+      [id, userId]
+    );
+
+    await client.query(
+      "DELETE FROM document_chunks WHERE document_id = $1 AND user_id = $2",
       [id, userId]
     );
 

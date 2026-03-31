@@ -6,6 +6,8 @@ import ComingSoon from "./pages/ComingSoon";
 import NotesList from "./pages/NotesList";
 import Documents from "./pages/Documents";
 import Quiz from "./pages/Quiz";
+import Analysis from "./pages/Analysis";
+import Profile from "./pages/Profile";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import OnboardingUpload from "./pages/OnboardingUpload";
@@ -42,6 +44,8 @@ function App() {
         <Route path="documents" element={<Documents />} />
         <Route path="documents/:id/view" element={<DocumentViewer />} />
         <Route path="quiz" element={<Quiz />} />
+        <Route path="analysis" element={<Analysis />} />
+        <Route path="profile" element={<Profile />} />
         <Route path="chat" element={<Chat />} />
       </Route>
     </Routes>

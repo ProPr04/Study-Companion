@@ -293,6 +293,13 @@ export const deleteDocument = async (req, res) => {
       [id, userId]
     );
 
+    await ensureQuizResultsTable();
+
+    await client.query(
+      "DELETE FROM quiz_results WHERE document_id = $1 AND user_id = $2",
+      [id, userId]
+    );
+
     await client.query(
       "DELETE FROM document_chunks WHERE document_id = $1 AND user_id = $2",
       [id, userId]
@@ -421,5 +428,59 @@ export const saveQuizResult = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to save quiz result" });
+  }
+};
+
+export const getQuizAnalysis = async (req, res) => {
+  try {
+    await ensureQuizResultsTable();
+
+    const userId = req.user.id;
+    const result = await pool.query(
+      `SELECT
+        quiz_results.*,
+        documents.file_name
+      FROM quiz_results
+      JOIN documents ON documents.id = quiz_results.document_id
+      WHERE quiz_results.user_id = $1 AND documents.user_id = $1
+      ORDER BY quiz_results.created_at ASC`,
+      [userId]
+    );
+
+    const attempts = result.rows.map((row, index) => ({
+      ...row,
+      attempt_number: index + 1,
+    }));
+
+    const totalAttempts = attempts.length;
+    const averagePercentage = totalAttempts
+      ? Math.round(
+          attempts.reduce((sum, attempt) => sum + Number(attempt.percentage || 0), 0) / totalAttempts
+        )
+      : 0;
+    const bestAttempt = attempts.reduce(
+      (best, attempt) => {
+        if (!best || Number(attempt.percentage) > Number(best.percentage)) {
+          return attempt;
+        }
+
+        return best;
+      },
+      null
+    );
+    const latestAttempt = totalAttempts ? attempts[totalAttempts - 1] : null;
+
+    res.json({
+      attempts,
+      summary: {
+        totalAttempts,
+        averagePercentage,
+        bestPercentage: bestAttempt ? Number(bestAttempt.percentage) : 0,
+        latestPercentage: latestAttempt ? Number(latestAttempt.percentage) : 0,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch quiz analysis" });
   }
 };

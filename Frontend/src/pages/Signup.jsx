@@ -3,6 +3,18 @@ import { useNavigate } from "react-router-dom";
 import { signupUser } from "../api";
 import "../App.css";
 
+const getAuthErrorMessage = (error, fallbackMessage) => {
+  if (error?.response?.data?.error) {
+    return error.response.data.error;
+  }
+
+  if (error?.code === "ERR_NETWORK") {
+    return "Backend server is not reachable. Start the backend on port 5000 and try again.";
+  }
+
+  return fallbackMessage;
+};
+
 const Signup = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,7 +34,7 @@ const Signup = () => {
       navigate("/onboarding");
     } catch (signupError) {
       console.error(signupError);
-      setError(signupError?.response?.data?.error || "Signup failed");
+      setError(getAuthErrorMessage(signupError, "Signup failed"));
     }
   };
 

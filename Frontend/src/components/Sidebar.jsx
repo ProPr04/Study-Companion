@@ -1,11 +1,12 @@
 import { useLocation, useNavigate } from "react-router-dom";
 
 const features = [
+  { name: "Chat", path: "/app/chat", description: "Ask questions and get answers grounded in your own documents." },
+  { name: "Quiz", path: "/app/quiz", description: "Generate a 10-question quiz from a selected upload." },
   { name: "Notes Generator", path: "/app/notes", description: "Upload a PDF and generate new notes." },
+  { name: "Analysis", path: "/app/analysis", description: "Track quiz marks and performance history over time." },
   { name: "Saved Notes", path: "/app/notes/list", description: "Browse everything already stored in the database." },
   { name: "Documents", path: "/app/documents", description: "Manage uploaded files and clean up stored content." },
-  { name: "Quiz", path: "/app/quiz", description: "Generate a 10-question quiz from a selected upload." },
-  { name: "Chat", path: "/app/chat", description: "Ask questions and get answers grounded in your own documents." },
 ];
 
 export default function Sidebar({ isOpen, onClose }) {

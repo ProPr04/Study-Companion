@@ -50,11 +50,6 @@ export default function Chat() {
       return;
     }
 
-    if (documents.length === 0) {
-      setError("Upload at least one document before starting chat.");
-      return;
-    }
-
     const nextUserMessage = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -169,7 +164,8 @@ export default function Chat() {
           <div className="quiz-sidebar-header">
             <h2 className="preview-title">Document scope</h2>
             <p className="preview-copy">
-              Ask across all uploads or narrow the chat to one specific document.
+              Ask across all uploads or narrow the tutor to one specific document. If no documents are available,
+              the assistant still uses your saved learner profile and recent conversation context.
             </p>
           </div>
 
@@ -179,7 +175,7 @@ export default function Chat() {
               className="chat-select"
               value={selectedDocumentId}
               onChange={(event) => setSelectedDocumentId(event.target.value)}
-              disabled={documentsLoading || isSending || documents.length === 0}
+              disabled={documentsLoading || isSending}
             >
               <option value="all">All documents</option>
               {documents.map((document) => (
@@ -191,8 +187,8 @@ export default function Chat() {
           </label>
 
           {documents.length === 0 && !documentsLoading ? (
-            <div className="status-banner warning">
-              No documents uploaded yet. Add a PDF first to start chat.
+            <div className="status-banner info">
+              No uploaded documents yet. Chat will continue in profile-aware tutor mode.
             </div>
           ) : null}
         </section>
@@ -203,7 +199,8 @@ export default function Chat() {
               <div className="notes-placeholder">
                 <div>
                   <strong>Your study chat will appear here.</strong>
-                  Ask about a concept, definition, formula, or summary from your uploaded documents.
+                  Ask about a concept, definition, formula, or doubt. The tutor now keeps track of your learner
+                  profile, recent confusion, and follow-up questions across turns.
                 </div>
               </div>
             ) : (
@@ -272,18 +269,18 @@ export default function Chat() {
               className="chat-input"
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask a question about your uploaded documents..."
-              rows={4}
-              disabled={isSending || documents.length === 0}
-            />
+                placeholder="Ask a question about your uploaded documents..."
+                rows={4}
+                disabled={isSending}
+              />
             <div className="chat-form-actions">
               <p className="chat-form-copy">
-                The model will answer only from retrieved document context.
+                The tutor uses document context when available and falls back to your saved learning profile when not.
               </p>
               <button
                 type="submit"
                 className="primary-cta"
-                disabled={isSending || documents.length === 0}
+                disabled={isSending}
               >
                 {isSending ? "Sending..." : "Send"}
               </button>

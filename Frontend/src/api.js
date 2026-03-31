@@ -53,6 +53,11 @@ export const saveQuizResult = async (docId, payload) => {
   return res.data;
 };
 
+export const fetchQuizAnalysis = async () => {
+  const res = await apiClient.get("/documents/quiz/analysis/history");
+  return res.data;
+};
+
 export const askChatQuestion = async (payload) => {
   const res = await apiClient.post("/chat/ask", payload);
   return res.data;
@@ -60,6 +65,16 @@ export const askChatQuestion = async (payload) => {
 
 export const refineChatAnswer = async (payload) => {
   const res = await apiClient.post("/chat/refine", payload);
+  return res.data;
+};
+
+export const fetchTutorProfile = async () => {
+  const res = await apiClient.get("/chat/profile");
+  return res.data;
+};
+
+export const updateTutorProfile = async (payload) => {
+  const res = await apiClient.put("/chat/profile", payload);
   return res.data;
 };
 

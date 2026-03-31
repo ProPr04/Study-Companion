@@ -2,6 +2,7 @@ import Groq from "groq-sdk";
 import "../config/env.js";
 import { chunkText } from "../utils/textProcessor.js";
 import { buildPrompt } from "../utils/buildPrompt.js";
+import { buildTutorPrompt } from "./tutorContextService.js";
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -65,6 +66,29 @@ const parseJsonResponse = (content) => {
     .trim();
 
   return JSON.parse(cleaned);
+};
+
+const completeStructuredJson = async ({
+  systemContent,
+  userContent,
+  temperature = 0.1,
+}) => {
+  const response = await groq.chat.completions.create({
+    model: "llama-3.1-8b-instant",
+    temperature,
+    messages: [
+      {
+        role: "system",
+        content: systemContent,
+      },
+      {
+        role: "user",
+        content: userContent,
+      },
+    ],
+  });
+
+  return parseJsonResponse(response.choices?.[0]?.message?.content ?? "{}");
 };
 
 const normalizeQuiz = (quiz, questionCount = 10) => {
@@ -272,6 +296,286 @@ export const answerQuestionWithContext = async ({ question, chunks }) => {
   } catch (error) {
     console.error("Groq chat error:", error);
     throw new Error("Chat answer generation failed");
+  }
+};
+
+export const answerQuestionWithTutorContext = async ({
+  question,
+  chunks,
+  profile,
+  memory,
+  recentTurns,
+  planner,
+  refinement,
+  correctionNotes,
+}) => {
+  try {
+    const prompt = buildTutorPrompt({
+      question,
+      chunks,
+      profile,
+      memory,
+      recentTurns,
+      planner,
+      refinement,
+      correctionNotes,
+    });
+
+    const response = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a personalized tutoring assistant. Follow the planner and profile exactly. Keep answers structured and do not restart when the planner says follow-up.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+    return response.choices?.[0]?.message?.content?.trim() ?? "I don't know based on the provided documents.";
+  } catch (error) {
+    console.error("Groq tutor chat error:", error);
+    throw new Error("Tutor chat answer generation failed");
+  }
+};
+
+export const analyzeTutorInput = async ({
+  question,
+  profile,
+  memory,
+  recentTurns,
+  refinement,
+}) => {
+  try {
+    const analysis = await completeStructuredJson({
+      systemContent: `You analyze a tutoring conversation.
+Return valid JSON only with this exact shape:
+{
+  "intent": "new_question" | "follow_up" | "clarification",
+  "target_concept": "string",
+  "confusion_detected": true,
+  "confusion_topic": "string",
+  "misconception_detected": true,
+  "misconception_statement": "string",
+  "follow_up_confidence": 0
+}
+Use the previous turn context to determine whether this is a semantic follow-up, not only a keyword match.`,
+      userContent: `Student profile:
+- level: ${profile.level}
+- weak_areas: ${profile.weakAreas.join(", ")}
+- known misconceptions: ${profile.misconceptions.join(", ") || "none"}
+
+Tutor memory:
+${JSON.stringify(memory, null, 2)}
+
+Recent turns:
+${recentTurns.map((turn) => `${turn.role}: ${turn.question || turn.answer}`).join("\n") || "none"}
+
+Current question:
+${question}
+
+Refinement request:
+${refinement ? JSON.stringify(refinement) : "none"}
+
+Classify the message and extract the real confusion or misconception if present.`,
+    });
+
+    return {
+      intent: ["new_question", "follow_up", "clarification"].includes(analysis?.intent)
+        ? analysis.intent
+        : "new_question",
+      targetConcept: String(analysis?.target_concept ?? "").trim(),
+      confusionDetected: Boolean(analysis?.confusion_detected),
+      confusionTopic: String(analysis?.confusion_topic ?? "").trim(),
+      misconceptionDetected: Boolean(analysis?.misconception_detected),
+      misconceptionStatement: String(analysis?.misconception_statement ?? "").trim(),
+      followUpConfidence: Number(analysis?.follow_up_confidence ?? 0),
+    };
+  } catch (error) {
+    const normalizedQuestion = String(question ?? "").trim().toLowerCase();
+    const patternTopicMatch = normalizedQuestion.match(
+      /(stack memory|call stack|stack frame|function calls|memory usage|recursion|iteration|performance)/i
+    );
+    const confusionDetected = /(i didn't understand|i did not understand|still confused|explain again|what do you mean)/i
+      .test(normalizedQuestion);
+    const misconceptionDetected = /(faster than iteration|always faster|recursion is faster)/i
+      .test(normalizedQuestion);
+
+    return {
+      intent: confusionDetected || recentTurns.length ? "follow_up" : "new_question",
+      targetConcept: patternTopicMatch?.[1] ? String(patternTopicMatch[1]).toLowerCase() : "",
+      confusionDetected,
+      confusionTopic: confusionDetected && patternTopicMatch?.[1]
+        ? String(patternTopicMatch[1]).toLowerCase()
+        : "",
+      misconceptionDetected,
+      misconceptionStatement: misconceptionDetected
+        ? "recursion is faster than iteration"
+        : "",
+      followUpConfidence: confusionDetected ? 0.55 : 0.2,
+      lowConfidence: true,
+    };
+  }
+};
+
+export const summarizeTutorResponse = async ({
+  question,
+  answer,
+  inputAnalysis,
+}) => {
+  try {
+    const summary = await completeStructuredJson({
+      systemContent: `You summarize what a tutor response ACTUALLY did.
+Return valid JSON only with this exact shape:
+{
+  "main_topic": "string",
+  "concepts_explained": ["string"],
+  "misconception_addressed": "string",
+  "remaining_gaps": ["string"]
+}
+Do not infer concepts that are not truly present in the answer.`,
+      userContent: `Student question:
+${question}
+
+Input analysis:
+${JSON.stringify(inputAnalysis, null, 2)}
+
+Tutor answer:
+${answer}`,
+    });
+
+    return {
+      mainTopic: String(summary?.main_topic ?? "").trim(),
+      conceptsExplained: Array.isArray(summary?.concepts_explained)
+        ? summary.concepts_explained.map((item) => String(item ?? "").trim()).filter(Boolean)
+        : [],
+      misconceptionAddressed: String(summary?.misconception_addressed ?? "").trim(),
+      remainingGaps: Array.isArray(summary?.remaining_gaps)
+        ? summary.remaining_gaps.map((item) => String(item ?? "").trim()).filter(Boolean)
+        : [],
+      lowConfidence: false,
+    };
+  } catch (error) {
+    return {
+      mainTopic: "",
+      conceptsExplained: [],
+      misconceptionAddressed: "",
+      remainingGaps: [],
+      lowConfidence: true,
+    };
+  }
+};
+
+export const verifyTutorResponse = async ({
+  question,
+  answer,
+  planner,
+  inputAnalysis,
+}) => {
+  const normalizedAnswer = String(answer ?? "").trim().toLowerCase();
+  const normalizedTargetConcept = String(
+    planner?.exactConceptToTeach || inputAnalysis?.confusionTopic || inputAnalysis?.targetConcept || ""
+  ).trim().toLowerCase();
+  const deterministicChecks = {
+    addressesTargetConcept: normalizedTargetConcept
+      ? normalizedAnswer.includes(normalizedTargetConcept)
+      : true,
+    followsScaffoldStructure: planner?.shouldZoomIn
+      ? ["quick bridge", "focus concept", "why it matters", "mini check"].every((section) =>
+          normalizedAnswer.includes(section)
+        )
+      : ["intuition", "how it works", "deep dive", "common mistake", "final takeaway"].every((section) =>
+          normalizedAnswer.includes(section)
+        ),
+    followUpNarrowingOk: planner?.shouldZoomIn
+      ? normalizedAnswer.includes("quick bridge") && normalizedAnswer.includes(normalizedTargetConcept)
+      : true,
+  };
+
+  try {
+    const verification = await completeStructuredJson({
+      systemContent: `You verify tutor responses.
+Return valid JSON only with this exact shape:
+{
+  "addresses_target_concept": true,
+  "resolves_active_confusion": true,
+  "follows_scaffold_structure": true,
+  "uses_multihop_reasoning": true,
+  "needs_regeneration": false,
+  "correction_notes": ["string"]
+}`,
+      userContent: `Question:
+${question}
+
+Planner:
+${JSON.stringify(planner, null, 2)}
+
+Input analysis:
+${JSON.stringify(inputAnalysis, null, 2)}
+
+Tutor answer:
+${answer}`,
+    });
+
+    const addressesTargetConcept = Boolean(verification?.addresses_target_concept) &&
+      deterministicChecks.addressesTargetConcept;
+    const followsScaffoldStructure = Boolean(verification?.follows_scaffold_structure) &&
+      deterministicChecks.followsScaffoldStructure;
+    const resolvesActiveConfusion = Boolean(verification?.resolves_active_confusion) &&
+      (!planner?.shouldZoomIn || deterministicChecks.followUpNarrowingOk);
+    const usesMultihopReasoning = Boolean(verification?.uses_multihop_reasoning);
+    const needsRegeneration = Boolean(verification?.needs_regeneration) ||
+      !addressesTargetConcept ||
+      !followsScaffoldStructure ||
+      !resolvesActiveConfusion ||
+      (planner?.shouldZoomIn && !deterministicChecks.followUpNarrowingOk);
+
+    const correctionNotes = Array.isArray(verification?.correction_notes)
+      ? verification.correction_notes.map((item) => String(item ?? "").trim()).filter(Boolean)
+      : [];
+
+    if (!deterministicChecks.addressesTargetConcept) {
+      correctionNotes.push(`Explicitly address the target concept: ${normalizedTargetConcept}.`);
+    }
+
+    if (!deterministicChecks.followsScaffoldStructure) {
+      correctionNotes.push(
+        planner?.shouldZoomIn
+          ? "Use the required follow-up sections: Quick bridge, Focus concept, Why it matters, Mini check."
+          : "Use the required scaffold sections: Intuition, How it works, Deep dive, Common mistake, Final takeaway."
+      );
+    }
+
+    if (planner?.shouldZoomIn && !deterministicChecks.followUpNarrowingOk) {
+      correctionNotes.push("Do not restart the full lesson. Narrow the answer to the active confusion topic.");
+    }
+
+    return {
+      addressesTargetConcept,
+      resolvesActiveConfusion,
+      followsScaffoldStructure,
+      usesMultihopReasoning,
+      needsRegeneration,
+      correctionNotes,
+      lowConfidence: false,
+    };
+  } catch (error) {
+    return {
+      addressesTargetConcept: deterministicChecks.addressesTargetConcept,
+      resolvesActiveConfusion: !planner?.shouldZoomIn || deterministicChecks.followUpNarrowingOk,
+      followsScaffoldStructure: deterministicChecks.followsScaffoldStructure,
+      usesMultihopReasoning: !planner?.shouldZoomIn || normalizedAnswer.includes("because"),
+      needsRegeneration: true,
+      correctionNotes: [
+        "Verification model failed. Regenerate using the required structure and target concept.",
+      ],
+      lowConfidence: true,
+    };
   }
 };
 

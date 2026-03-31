@@ -344,181 +344,6 @@ export const answerQuestionWithTutorContext = async ({
   }
 };
 
-const normalizeQuestion = (question) => String(question ?? "").trim();
-const normalizeLower = (value) => normalizeQuestion(value).toLowerCase();
-
-const uniqueStrings = (values = []) => [...new Set(
-  values
-    .map((value) => normalizeQuestion(value))
-    .filter(Boolean)
-)];
-
-const phraseIncludes = (text, phrase) => normalizeLower(text).includes(normalizeLower(phrase));
-
-const inferQuestionAspects = (question) => {
-  const normalizedQuestion = normalizeLower(question);
-  const aspects = [];
-
-  if (normalizedQuestion.includes("binary tree")) {
-    aspects.push("binary tree");
-  }
-
-  if (normalizedQuestion.includes("hash table")) {
-    aspects.push("hash table");
-  }
-
-  if (normalizedQuestion.includes("heap")) {
-    aspects.push("heap");
-  }
-
-  if (normalizedQuestion.includes("stack overflow")) {
-    aspects.push("stack overflow");
-  }
-
-  if (normalizedQuestion.includes("call stack")) {
-    aspects.push("call stack");
-  }
-
-  if (normalizedQuestion.includes("stack in web development") || normalizedQuestion.includes("tech stack")) {
-    aspects.push("web development");
-  }
-
-  if (normalizedQuestion.includes("react")) {
-    aspects.push("react");
-  }
-
-  if (normalizedQuestion.includes("recursion")) {
-    aspects.push("recursion");
-  }
-
-  return uniqueStrings(aspects);
-};
-
-const buildHeuristicTutorAnalysis = ({
-  question,
-  memory,
-  recentTurns,
-  refinement,
-  modelAnalysis = {},
-}) => {
-  const normalizedQuestion = normalizeLower(question);
-  const previousTopic = normalizeQuestion(memory?.lastTopic || memory?.previousResponseSummary?.mainTopic);
-  const previousConcepts = uniqueStrings([
-    ...(memory?.previousResponseSummary?.conceptsExplained ?? []),
-    ...(memory?.explainedConcepts ?? []),
-  ]);
-  const explicitTopicShift = /(switching topics|new topic|different question|separate question|unrelated question)/i
-    .test(normalizedQuestion);
-  const selfResolved = /(i get it now|got it now|that makes sense now|never mind,? i get it|oh wait.*i get it now)/i
-    .test(normalizedQuestion);
-  const vagueConfusionSignal = /^(this|that|it)\b|this part feels weird|i don't get this part|i dont get this part|that part feels weird/i
-    .test(normalizedQuestion);
-  const explicitConfusionSignal = /(i didn't understand|i did not understand|still confused|explain again|what do you mean|why does .* matter|what part of .*|confused about)/i
-    .test(normalizedQuestion);
-  const ambiguousShortQuestion = normalizedQuestion.split(/\s+/).filter(Boolean).length <= 2;
-  const ambiguousStack = /\bstack\b/.test(normalizedQuestion) &&
-    !/(call stack|stack overflow|stack frame|stack memory|tech stack|web development|data structure)/i.test(normalizedQuestion);
-  const misconceptionDetected = Boolean(modelAnalysis?.misconceptionDetected) ||
-    /(obviously faster|always faster|recursion is faster|faster than iteration)/i.test(normalizedQuestion);
-  const misconceptionStatement = misconceptionDetected
-    ? "recursion is faster than iteration"
-    : "";
-
-  let targetConcept = normalizeQuestion(modelAnalysis?.targetConcept);
-
-  if (!targetConcept) {
-    if (normalizedQuestion.includes("stack in web development") || normalizedQuestion.includes("tech stack")) {
-      targetConcept = "tech stack in web development";
-    } else if (normalizedQuestion.includes("binary tree")) {
-      targetConcept = "binary tree";
-    } else if (normalizedQuestion.includes("hash table")) {
-      targetConcept = "hash table";
-    } else if (/(call stack|stack frame|stack memory)/i.test(normalizedQuestion)) {
-      targetConcept = "call stack";
-    } else if (normalizedQuestion.includes("heap")) {
-      targetConcept = "heap memory";
-    } else if (normalizedQuestion.includes("recursion")) {
-      targetConcept = "recursion";
-    }
-  }
-
-  let confusionTopic = normalizeQuestion(modelAnalysis?.confusionTopic);
-
-  if (!confusionTopic && /why does stack matter/i.test(normalizedQuestion)) {
-    confusionTopic = "call stack in recursion";
-  }
-
-  const modelLooksReliable = ["new_question", "follow_up", "clarification"].includes(modelAnalysis?.intent) &&
-    Number(modelAnalysis?.followUpConfidence ?? 0) >= 0.65;
-  const followsPreviousTopic = previousTopic && (
-    normalizedQuestion.includes(previousTopic.toLowerCase()) ||
-    previousConcepts.some((concept) => concept && normalizedQuestion.includes(concept.toLowerCase()))
-  );
-  const needsClarification = !refinement && (
-    ambiguousShortQuestion ||
-    vagueConfusionSignal ||
-    (ambiguousStack && !targetConcept) ||
-    (/react/.test(normalizedQuestion) && /binary tree/.test(normalizedQuestion) && /\bstack\b/.test(normalizedQuestion))
-  );
-
-  let intent = "new_question";
-
-  if (refinement) {
-    intent = "follow_up";
-  } else if (needsClarification || selfResolved) {
-    intent = "clarification";
-  } else if (explicitTopicShift) {
-    intent = "new_question";
-  } else if (modelLooksReliable && modelAnalysis.intent === "follow_up") {
-    intent = "follow_up";
-  } else if (followsPreviousTopic && (explicitConfusionSignal || explicitConfusionSignal || /here\b|that\b|this\b/.test(normalizedQuestion))) {
-    intent = "follow_up";
-  } else if (modelLooksReliable && modelAnalysis.intent === "clarification") {
-    intent = "clarification";
-  }
-
-  const confusionDetected = !selfResolved && !needsClarification && (
-    Boolean(modelAnalysis?.confusionDetected && normalizeQuestion(modelAnalysis?.confusionTopic)) ||
-    Boolean(confusionTopic) ||
-    explicitConfusionSignal
-  );
-  const followUpConfidence = needsClarification
-    ? 0.25
-    : intent === "follow_up"
-      ? Math.max(Number(modelAnalysis?.followUpConfidence ?? 0), 0.7)
-      : Number(modelAnalysis?.followUpConfidence ?? 0) || 0.2;
-
-  let clarificationReason = "";
-
-  if (needsClarification) {
-    if (ambiguousStack || ambiguousShortQuestion) {
-      clarificationReason = "ambiguous_topic";
-    } else if (vagueConfusionSignal) {
-      clarificationReason = "unclear_reference";
-    } else {
-      clarificationReason = "mixed_topic";
-    }
-  } else if (selfResolved) {
-    clarificationReason = "self_resolved";
-  }
-
-  return {
-    intent,
-    targetConcept,
-    confusionDetected,
-    confusionTopic: confusionDetected ? confusionTopic || targetConcept : "",
-    misconceptionDetected,
-    misconceptionStatement,
-    followUpConfidence,
-    needsClarification,
-    clarificationReason,
-    selfResolved,
-    explicitTopicShift,
-    questionAspects: inferQuestionAspects(question),
-    lowConfidence: Boolean(modelAnalysis?.lowConfidence),
-  };
-};
-
 export const analyzeTutorInput = async ({
   question,
   profile,
@@ -526,10 +351,8 @@ export const analyzeTutorInput = async ({
   recentTurns,
   refinement,
 }) => {
-  let modelAnalysis = null;
-
   try {
-    modelAnalysis = await completeStructuredJson({
+    const analysis = await completeStructuredJson({
       systemContent: `You analyze a tutoring conversation.
 Return valid JSON only with this exact shape:
 {
@@ -561,32 +384,43 @@ ${refinement ? JSON.stringify(refinement) : "none"}
 
 Classify the message and extract the real confusion or misconception if present.`,
     });
+
+    return {
+      intent: ["new_question", "follow_up", "clarification"].includes(analysis?.intent)
+        ? analysis.intent
+        : "new_question",
+      targetConcept: String(analysis?.target_concept ?? "").trim(),
+      confusionDetected: Boolean(analysis?.confusion_detected),
+      confusionTopic: String(analysis?.confusion_topic ?? "").trim(),
+      misconceptionDetected: Boolean(analysis?.misconception_detected),
+      misconceptionStatement: String(analysis?.misconception_statement ?? "").trim(),
+      followUpConfidence: Number(analysis?.follow_up_confidence ?? 0),
+    };
   } catch (error) {
-    modelAnalysis = {
+    const normalizedQuestion = String(question ?? "").trim().toLowerCase();
+    const patternTopicMatch = normalizedQuestion.match(
+      /(stack memory|call stack|stack frame|function calls|memory usage|recursion|iteration|performance)/i
+    );
+    const confusionDetected = /(i didn't understand|i did not understand|still confused|explain again|what do you mean)/i
+      .test(normalizedQuestion);
+    const misconceptionDetected = /(faster than iteration|always faster|recursion is faster)/i
+      .test(normalizedQuestion);
+
+    return {
+      intent: confusionDetected || recentTurns.length ? "follow_up" : "new_question",
+      targetConcept: patternTopicMatch?.[1] ? String(patternTopicMatch[1]).toLowerCase() : "",
+      confusionDetected,
+      confusionTopic: confusionDetected && patternTopicMatch?.[1]
+        ? String(patternTopicMatch[1]).toLowerCase()
+        : "",
+      misconceptionDetected,
+      misconceptionStatement: misconceptionDetected
+        ? "recursion is faster than iteration"
+        : "",
+      followUpConfidence: confusionDetected ? 0.55 : 0.2,
       lowConfidence: true,
     };
   }
-
-  return buildHeuristicTutorAnalysis({
-    question,
-    memory,
-    recentTurns,
-    refinement,
-    modelAnalysis: modelAnalysis
-      ? {
-          intent: ["new_question", "follow_up", "clarification"].includes(modelAnalysis?.intent)
-            ? modelAnalysis.intent
-            : "new_question",
-          targetConcept: String(modelAnalysis?.target_concept ?? "").trim(),
-          confusionDetected: Boolean(modelAnalysis?.confusion_detected),
-          confusionTopic: String(modelAnalysis?.confusion_topic ?? "").trim(),
-          misconceptionDetected: Boolean(modelAnalysis?.misconception_detected),
-          misconceptionStatement: String(modelAnalysis?.misconception_statement ?? "").trim(),
-          followUpConfidence: Number(modelAnalysis?.follow_up_confidence ?? 0),
-          lowConfidence: Boolean(modelAnalysis?.lowConfidence),
-        }
-      : {},
-  });
 };
 
 export const summarizeTutorResponse = async ({
@@ -651,9 +485,6 @@ export const verifyTutorResponse = async ({
     addressesTargetConcept: normalizedTargetConcept
       ? normalizedAnswer.includes(normalizedTargetConcept)
       : true,
-    coversQuestionAspects: uniqueStrings(inputAnalysis?.questionAspects).every((aspect) =>
-      normalizedAnswer.includes(aspect.toLowerCase())
-    ),
     followsScaffoldStructure: planner?.shouldZoomIn
       ? ["quick bridge", "focus concept", "why it matters", "mini check"].every((section) =>
           normalizedAnswer.includes(section)
@@ -700,7 +531,6 @@ ${answer}`,
     const usesMultihopReasoning = Boolean(verification?.uses_multihop_reasoning);
     const needsRegeneration = Boolean(verification?.needs_regeneration) ||
       !addressesTargetConcept ||
-      !deterministicChecks.coversQuestionAspects ||
       !followsScaffoldStructure ||
       !resolvesActiveConfusion ||
       (planner?.shouldZoomIn && !deterministicChecks.followUpNarrowingOk);
@@ -711,12 +541,6 @@ ${answer}`,
 
     if (!deterministicChecks.addressesTargetConcept) {
       correctionNotes.push(`Explicitly address the target concept: ${normalizedTargetConcept}.`);
-    }
-
-    if (!deterministicChecks.coversQuestionAspects) {
-      correctionNotes.push(
-        `Address all major parts of the question directly: ${uniqueStrings(inputAnalysis?.questionAspects).join(", ")}.`
-      );
     }
 
     if (!deterministicChecks.followsScaffoldStructure) {
@@ -746,9 +570,9 @@ ${answer}`,
       resolvesActiveConfusion: !planner?.shouldZoomIn || deterministicChecks.followUpNarrowingOk,
       followsScaffoldStructure: deterministicChecks.followsScaffoldStructure,
       usesMultihopReasoning: !planner?.shouldZoomIn || normalizedAnswer.includes("because"),
-      needsRegeneration: !deterministicChecks.coversQuestionAspects,
+      needsRegeneration: true,
       correctionNotes: [
-        "Verification model failed. Return the best aligned answer and cover the main question aspects explicitly.",
+        "Verification model failed. Regenerate using the required structure and target concept.",
       ],
       lowConfidence: true,
     };

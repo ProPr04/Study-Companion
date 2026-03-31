@@ -33,22 +33,6 @@ const sanitizeStringArray = (value, fallback = []) => {
   return [...new Set(value.map((item) => sanitizeString(item)).filter(Boolean))];
 };
 
-const arraysOverlap = (left = [], right = []) => {
-  const normalizedRight = sanitizeStringArray(right, []).map((item) => item.toLowerCase());
-  return sanitizeStringArray(left, []).some((item) => normalizedRight.includes(item.toLowerCase()));
-};
-
-const isConceptRelevantToTopic = (concept, topic) => {
-  const normalizedConcept = sanitizeString(concept).toLowerCase();
-  const normalizedTopic = sanitizeString(topic).toLowerCase();
-
-  if (!normalizedConcept || !normalizedTopic) {
-    return false;
-  }
-
-  return normalizedConcept.includes(normalizedTopic) || normalizedTopic.includes(normalizedConcept);
-};
-
 const normalizeLevel = (level) => {
   const normalizedLevel = sanitizeString(level, DEFAULT_PROFILE.level).toLowerCase();
   return ["beginner", "intermediate", "advanced"].includes(normalizedLevel)
@@ -299,59 +283,31 @@ export const buildTutorPlan = ({
 }) => {
   const unresolvedConcepts = sanitizeStringArray(memory.unresolvedConcepts, []);
   const dynamicMisconceptions = sanitizeStringArray(memory.detectedMisconceptions, []);
-  const previousConcepts = sanitizeStringArray(memory.previousResponseSummary?.conceptsExplained, []);
-  const sameTopicFollowUp = inputAnalysis.intent === "follow_up" &&
-    inputAnalysis.followUpConfidence >= 0.65 &&
-    (
-      isConceptRelevantToTopic(inputAnalysis.targetConcept, memory.lastTopic) ||
-      isConceptRelevantToTopic(inputAnalysis.confusionTopic, memory.lastTopic) ||
-      arraysOverlap(inputAnalysis.questionAspects, previousConcepts)
-    );
   const targetConcept =
     sanitizeString(inputAnalysis.confusionTopic) ||
     sanitizeString(inputAnalysis.targetConcept) ||
-    (sameTopicFollowUp ? unresolvedConcepts[0] : "") ||
-    (sameTopicFollowUp ? sanitizeString(memory.lastTopic) : "");
-  const relevantProfileMisconception = sanitizeStringArray(profile.misconceptions, []).find((item) =>
-    isConceptRelevantToTopic(item, targetConcept)
-  );
-  const relevantDynamicMisconception = dynamicMisconceptions.find((item) =>
-    isConceptRelevantToTopic(item, targetConcept)
-  );
+    unresolvedConcepts[0] ||
+    sanitizeString(memory.lastTopic);
   const misconceptionToCorrect = inputAnalysis.misconceptionDetected
     ? inputAnalysis.misconceptionStatement
-    : relevantDynamicMisconception || relevantProfileMisconception || "";
-  const zoomMode = !inputAnalysis.needsClarification &&
-    !inputAnalysis.selfResolved &&
-    (
-      inputAnalysis.confusionDetected ||
-      sameTopicFollowUp ||
-      Boolean(refinement)
-    );
+    : dynamicMisconceptions[0] || profile.misconceptions[0] || "";
+  const zoomMode = inputAnalysis.confusionDetected || inputAnalysis.intent !== "new_question";
   const weakAreaFocus = profile.weakAreas.filter((item) =>
     targetConcept.toLowerCase().includes(item.toLowerCase())
   );
 
   return {
-    mode: inputAnalysis.needsClarification || inputAnalysis.selfResolved
-      ? "clarify"
-      : zoomMode
-        ? "zoom_in"
-        : "full_explanation",
+    mode: zoomMode ? "zoom_in" : "full_explanation",
     exactConceptToTeach: targetConcept,
     explanationDepth: zoomMode ? `${profile.level}_focused` : `${profile.level}_full`,
     shouldZoomIn: zoomMode,
-    shouldClarify: Boolean(inputAnalysis.needsClarification),
-    shouldAcknowledgeResolution: Boolean(inputAnalysis.selfResolved),
     shouldCorrectMisconception: Boolean(misconceptionToCorrect),
     misconceptionToCorrect,
-    unresolvedConcepts: sameTopicFollowUp ? unresolvedConcepts : [],
+    unresolvedConcepts,
     activeConfusion: inputAnalysis.confusionDetected
       ? inputAnalysis.confusionTopic
-      : sameTopicFollowUp
-        ? memory.activeConfusion
-        : "",
-    weakAreaFocus: weakAreaFocus,
+      : memory.activeConfusion,
+    weakAreaFocus: weakAreaFocus.length ? weakAreaFocus : profile.weakAreas,
     refinement,
   };
 };
@@ -423,6 +379,7 @@ Refinement:
 Verifier notes:
 - ${correctionNotes.length ? correctionNotes.slice(0, 3).map((note) => limitText(note, 120)).join(" | ") : "none"}
 
+HEAD
 Rules:
 - If ambiguous, ask a short clarifying question.
 - If the student already resolved it, acknowledge and offer the next step.
@@ -436,122 +393,37 @@ Rules:
 Format:
 ${formatLabel}
 
+Mandatory instructions:
+- Do NOT restart explanation. Continue from previous understanding.
+- If active confusion exists, focus only on that concept first.
+- If unresolved concepts exist, prioritize them before expanding further.
+- If a misconception is present, explicitly correct it.
+- Use beginner-friendly language when level is beginner.
+- Use scaffolded teaching.
+- Include multi-hop reasoning when the topic depends on linked concepts.
+- ${hasContext
+    ? "Use the provided document context for factual support whenever relevant."
+    : "No document context is available, so answer using your own subject knowledge carefully."}
+
+Formatting:
+- If this is a zoomed-in follow-up, use:
+  1. Quick bridge
+  2. Focus concept
+  3. Why it matters
+  4. Mini check
+- Otherwise use:
+  1. Intuition
+  2. How it works
+  3. Deep dive
+  4. Common mistake
+  5. Final takeaway
+ parent of 24b4c3d (all bugs are fixed)
+
 Context:
 ${context}
 
 Question:
 ${sanitizeString(question)}`;
-};
-
-const toNaturalList = (items = [], fallback = "the earlier explanation") => {
-  const normalized = sanitizeStringArray(items, []).slice(0, 3);
-
-  if (!normalized.length) {
-    return fallback;
-  }
-
-  if (normalized.length === 1) {
-    return normalized[0];
-  }
-
-  if (normalized.length === 2) {
-    return `${normalized[0]} or ${normalized[1]}`;
-  }
-
-  return `${normalized.slice(0, -1).join(", ")}, or ${normalized[normalized.length - 1]}`;
-};
-
-export const buildTutorFallbackResponse = ({
-  question,
-  inputAnalysis,
-  planner,
-  memory,
-}) => {
-  if (inputAnalysis.needsClarification) {
-    const likelyTopics = /\bstack\b/i.test(question)
-      ? "call stack, the stack data structure, or a web tech stack"
-      : toNaturalList(memory.previousResponseSummary?.conceptsExplained, memory.lastTopic || "the earlier explanation");
-
-    return [
-      "1. Clarify",
-      `I want to make sure I answer the right thing before I guess.`,
-      "",
-      "2. Why I am asking",
-      inputAnalysis.clarificationReason === "unclear_reference"
-        ? `The phrase you used could refer to ${likelyTopics}.`
-        : `Your question could reasonably mean ${likelyTopics}.`,
-      "",
-      "3. Next reply",
-      "Reply with the exact concept you want, and I will focus only on that.",
-    ].join("\n");
-  }
-
-  if (inputAnalysis.selfResolved) {
-    const confirmedConcept = planner.exactConceptToTeach || memory.lastTopic || "that concept";
-
-    return [
-      "1. Quick bridge",
-      "Yes, that sounds right.",
-      "",
-      "2. Confirmed",
-      `You have the key idea: ${confirmedConcept}.`,
-      "",
-      "3. Next step",
-      "If you want, I can either go one level deeper or switch topics cleanly.",
-    ].join("\n");
-  }
-
-  if (inputAnalysis.misconceptionDetected) {
-    return [
-      "1. Intuition",
-      "Not necessarily. Recursion can be clearer, but it is not automatically faster than iteration.",
-      "",
-      "2. How it works",
-      "Each recursive call adds a new stack frame, so recursion can use more memory and add overhead.",
-      "",
-      "3. Deep dive",
-      "Iteration often wins on raw efficiency because it usually avoids that extra call-stack growth. Recursion can still be a good choice when the problem structure is naturally recursive.",
-      "",
-      "4. Common mistake",
-      "The mistake is assuming elegance means speed. Readability and runtime cost are different questions.",
-      "",
-      "5. Final takeaway",
-      "Treat recursion as a modeling tool, not a default performance optimization.",
-    ].join("\n");
-  }
-
-  if (planner.shouldZoomIn && planner.exactConceptToTeach) {
-    return [
-      "1. Quick bridge",
-      "You already understand the broader idea, so let’s isolate the missing piece.",
-      "",
-      "2. Focus concept",
-      `${planner.exactConceptToTeach} is the part that connects this question to the earlier explanation.`,
-      "",
-      "3. Why it matters",
-      "That missing piece is what makes the rest of the reasoning fit together instead of feeling memorized.",
-      "",
-      "4. Mini check",
-      `If you want, reply with "${planner.exactConceptToTeach}" and I will explain just that part with one concrete example.`,
-    ].join("\n");
-  }
-
-  return [
-    "1. Intuition",
-    "I can help with that, but I want to keep the answer aligned with your exact question.",
-    "",
-    "2. How it works",
-    "If you restate the concept in one short phrase, I will answer it directly.",
-    "",
-    "3. Deep dive",
-    "This avoids dragging in old context that may not be relevant anymore.",
-    "",
-    "4. Common mistake",
-    "The main risk here is answering a nearby question instead of your real one.",
-    "",
-    "5. Final takeaway",
-    "Send the exact concept you want next, and I will keep the answer narrow.",
-  ].join("\n");
 };
 
 const mergeMisconceptions = (existing, additions, addressed) => {
@@ -572,15 +444,10 @@ export const updateTutorMemoryFromTurn = ({
   responseSummary,
   verification,
 }) => {
-  const sameTopicContinuation = inputAnalysis.intent === "follow_up" && inputAnalysis.followUpConfidence >= 0.65;
-  const unresolved = new Set(
-    sameTopicContinuation
-      ? sanitizeStringArray(memory.unresolvedConcepts, [])
-      : []
-  );
+  const unresolved = new Set(sanitizeStringArray(memory.unresolvedConcepts, []));
   const explained = sanitizeStringArray(
     [
-      ...(sameTopicContinuation ? memory.explainedConcepts : []),
+      ...memory.explainedConcepts,
       ...(verification?.addressesTargetConcept ? responseSummary.conceptsExplained : []),
     ],
     []
@@ -604,21 +471,15 @@ export const updateTutorMemoryFromTurn = ({
     unresolved.add(inputAnalysis.confusionTopic);
   }
 
-  const allowedRemainingGaps = inputAnalysis.confusionDetected
-    ? sanitizeStringArray(responseSummary.remainingGaps, [])
-    : [];
-
-  allowedRemainingGaps.forEach((gap) => unresolved.add(gap));
+  sanitizeStringArray(responseSummary.remainingGaps, []).forEach((gap) => unresolved.add(gap));
 
   const verifiedMainTopic = verification?.addressesTargetConcept
     ? sanitizeString(responseSummary.mainTopic || inputAnalysis.targetConcept || memory.lastTopic)
     : sanitizeString(memory.lastTopic);
 
-  const activeConfusion = inputAnalysis.confusionDetected
-    ? verification?.resolvesActiveConfusion
-      ? allowedRemainingGaps[0] || ""
-      : sanitizeString(inputAnalysis.confusionTopic || memory.activeConfusion)
-    : "";
+  const activeConfusion = verification?.resolvesActiveConfusion
+    ? sanitizeStringArray(responseSummary.remainingGaps, [])[0] || ""
+    : sanitizeString(inputAnalysis.confusionTopic || memory.activeConfusion);
 
   const nextMemory = {
     lastTopic: verifiedMainTopic,
@@ -638,7 +499,7 @@ export const updateTutorMemoryFromTurn = ({
       misconceptionAddressed: verification?.addressesTargetConcept
         ? sanitizeString(responseSummary.misconceptionAddressed)
         : "",
-      remainingGaps: allowedRemainingGaps,
+      remainingGaps: sanitizeStringArray(responseSummary.remainingGaps, []),
     },
   };
 

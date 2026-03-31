@@ -210,6 +210,44 @@ export const updateStudentProfile = async (userId, payload = {}) => {
   return mapProfileRow(result.rows[0]);
 };
 
+const limitText = (value, maxLength = 240) => {
+  const normalized = sanitizeString(value);
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
+};
+
+const summarizeList = (values = [], limit = 3, fallback = "none") => {
+  const normalized = sanitizeStringArray(values, []);
+
+  if (!normalized.length) {
+    return fallback;
+  }
+
+  return normalized.slice(0, limit).join(", ");
+};
+
+const buildCompactRecentTurns = (recentTurns = [], limit = 4) => {
+  const turns = recentTurns.slice(-limit).map((turn) => {
+    const content = turn.role === "assistant" ? turn.answer : turn.question;
+    return `${turn.role}: ${limitText(content, 160) || "none"}`;
+  });
+
+  return turns.length ? turns.join("\n") : "none";
+};
+
+const buildCompactContext = (chunks = [], limit = 3, maxChunkLength = 900) => {
+  const compact = chunks
+    .slice(0, limit)
+    .map((chunk, index) => `S${index + 1} (${sanitizeString(chunk.file_name || chunk.fileName || "document")}): ${limitText(chunk.content, maxChunkLength)}`)
+    .join("\n");
+
+  return compact || "No document context provided for this turn.";
+};
+
 export const getTutorMemory = async (userId) => {
   await ensureTutorContextTables();
 
@@ -328,97 +366,80 @@ export const buildTutorPrompt = ({
   refinement,
   correctionNotes = [],
 }) => {
-  const context = chunks
-    .map((chunk, index) => `Source ${index + 1}:\n${chunk.content}`)
-    .join("\n\n")
-    .slice(0, 12000);
+  const context = buildCompactContext(chunks);
   const hasContext = Boolean(context.trim());
   const previousSummary = memory.previousResponseSummary;
+  const modeLabel = planner.shouldClarify
+    ? "clarify"
+    : planner.shouldAcknowledgeResolution
+      ? "confirm"
+      : planner.shouldZoomIn
+        ? "zoom_in"
+        : "full";
+  const formatLabel = planner.shouldClarify
+    ? "Clarify | Why I am asking | Next reply"
+    : planner.shouldAcknowledgeResolution
+      ? "Quick bridge | Confirmed | Next step"
+      : planner.shouldZoomIn
+        ? "Quick bridge | Focus concept | Why it matters | Mini check"
+        : "Intuition | How it works | Deep dive | Common mistake | Final takeaway";
 
-  return `You are a context-aware AI tutor.
+  return `You are a concise, context-aware AI tutor.
 
-Student profile:
-- Level: ${profile.level}
-- Subject: ${profile.subject}
-- Weak areas: ${profile.weakAreas.join(", ") || "none"}
-- Known misconceptions: ${profile.misconceptions.join(", ") || "none"}
-- Dynamically detected misconceptions: ${memory.detectedMisconceptions.join(", ") || "none"}
+Goal:
+- Answer the student's current question directly.
+- Continue the conversation without restarting unless clarification is required.
 
-Tutor memory:
-- Last topic: ${memory.lastTopic || "none"}
-- Last explained concepts: ${memory.explainedConcepts.join(", ") || "none"}
-- Unresolved concepts: ${memory.unresolvedConcepts.join(", ") || "none"}
-- Active confusion: ${memory.activeConfusion || "none"}
+Student:
+- level: ${profile.level}
+- subject: ${limitText(profile.subject, 80) || "none"}
+- weak_areas: ${summarizeList(profile.weakAreas)}
+- misconceptions: ${summarizeList(profile.misconceptions)}
+- dynamic_misconceptions: ${summarizeList(memory.detectedMisconceptions)}
 
-Previous response summary:
-- Main topic: ${previousSummary.mainTopic || "none"}
-- Concepts explained: ${previousSummary.conceptsExplained.join(", ") || "none"}
-- Misconception addressed: ${previousSummary.misconceptionAddressed || "none"}
-- Remaining gaps: ${previousSummary.remainingGaps.join(", ") || "none"}
-
-Recent turns:
-${recentTurns.map((turn) => `${turn.role}: ${turn.question || turn.answer}`).join("\n") || "none"}
-
-Current question:
-${sanitizeString(question)}
+Memory:
+- last_topic: ${limitText(memory.lastTopic, 80) || "none"}
+- explained: ${summarizeList(memory.explainedConcepts)}
+- unresolved: ${summarizeList(memory.unresolvedConcepts)}
+- active_confusion: ${limitText(memory.activeConfusion, 80) || "none"}
+- previous_summary: main=${limitText(previousSummary.mainTopic, 80) || "none"}; concepts=${summarizeList(previousSummary.conceptsExplained)}; remaining=${summarizeList(previousSummary.remainingGaps)}
 
 Planner:
-- Exact concept to teach: ${planner.exactConceptToTeach || "none"}
-- Explanation depth: ${planner.explanationDepth}
-- Zoom in: ${planner.shouldZoomIn ? "yes" : "no"}
-- Active confusion to resolve: ${planner.activeConfusion || "none"}
-- Misconception to correct: ${planner.misconceptionToCorrect || "none"}
-- Weak-area emphasis: ${planner.weakAreaFocus.join(", ") || "none"}
+- mode: ${modeLabel}
+- target: ${limitText(planner.exactConceptToTeach, 100) || "none"}
+- depth: ${planner.explanationDepth}
+- active_confusion: ${limitText(planner.activeConfusion, 100) || "none"}
+- misconception_to_correct: ${limitText(planner.misconceptionToCorrect, 120) || "none"}
+- emphasis: ${summarizeList(planner.weakAreaFocus)}
 
-Refinement request:
-${refinement ? JSON.stringify(refinement) : "none"}
+Recent turns:
+${buildCompactRecentTurns(recentTurns)}
 
-Previous answer to continue from:
-${refinement?.previousAnswer || "none"}
+Refinement:
+- type: ${refinement?.type || "none"}
+- original_question: ${limitText(refinement?.originalQuestion, 120) || "none"}
+- previous_answer: ${limitText(refinement?.previousAnswer, 220) || "none"}
 
-Correction notes from verifier:
-${correctionNotes.join(" | ") || "none"}
+Verifier notes:
+- ${correctionNotes.length ? correctionNotes.slice(0, 3).map((note) => limitText(note, 120)).join(" | ") : "none"}
 
-Mandatory instructions:
-- Do NOT restart explanation. Continue from previous understanding.
-- If the message is ambiguous, ask a short clarifying question instead of guessing.
-- If the student has already corrected themselves, acknowledge it briefly and offer the next step.
-- If active confusion exists, focus only on that concept first.
-- Only use unresolved concepts when the current turn is clearly the same topic.
-- If a misconception is present, explicitly correct it.
-- Use beginner-friendly language when level is beginner.
-- Use scaffolded teaching.
-- Include multi-hop reasoning when the topic depends on linked concepts.
-- Do not infer specialized variants. For example, do not describe binary tree ordering rules unless the question is about a binary search tree.
-- ${hasContext
-    ? "Use the provided document context for factual support whenever relevant."
-    : "No document context is available, so answer using your own subject knowledge carefully."}
+Rules:
+- If ambiguous, ask a short clarifying question.
+- If the student already resolved it, acknowledge and offer the next step.
+- If active confusion exists, focus on that first.
+- Correct misconceptions explicitly when present.
+- Use beginner-friendly language for beginners.
+- Use the exact section headings for the selected format.
+- ${hasContext ? "Use the provided context for factual grounding when relevant." : "No document context is available; answer carefully from general subject knowledge."}
+- Do not add specialized variants not asked for.
 
-Formatting:
-- If the message needs clarification, use:
-  1. Clarify
-  2. Why I am asking
-  3. Next reply
-- If the student already resolved the confusion, use:
-  1. Quick bridge
-  2. Confirmed
-  3. Next step
-- If this is a zoomed-in follow-up, use:
-  1. Quick bridge
-  2. Focus concept
-  3. Why it matters
-  4. Mini check
-- Otherwise use:
-  1. Intuition
-  2. How it works
-  3. Deep dive
-  4. Common mistake
-  5. Final takeaway
+Format:
+${formatLabel}
 
-CONTEXT:
-${hasContext ? context : "No document context provided for this turn."}
+Context:
+${context}
 
-QUESTION:
+Question:
 ${sanitizeString(question)}`;
 };
 

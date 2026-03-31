@@ -24,32 +24,167 @@ const buildSources = (relevantChunks) =>
     excerpt: `${chunk.content.slice(0, 220)}${chunk.content.length > 220 ? "..." : ""}`,
   }));
 
+const DEFAULT_PROFILE = {
+  level: "beginner",
+  subject: "Data Structures and Algorithms",
+  weakAreas: ["recursion", "memory management"],
+  misconceptions: ["recursion is faster than iteration"],
+};
+
+const DEFAULT_MEMORY = {
+  lastTopic: "",
+  explainedConcepts: [],
+  unresolvedConcepts: [],
+  activeConfusion: "",
+  detectedMisconceptions: [],
+  previousResponseSummary: {
+    mainTopic: "",
+    conceptsExplained: [],
+    misconceptionAddressed: "",
+    remainingGaps: [],
+  },
+};
+
+const safeStep = async (label, action, fallback) => {
+  try {
+    return await action();
+  } catch (error) {
+    console.error(`[chat] ${label} failed:`, error);
+    return fallback;
+  }
+};
+
+const normalizeDocumentId = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const numericId = Number(value);
+  return Number.isInteger(numericId) && numericId > 0 ? numericId : null;
+};
+
+const buildEmergencyTutorResponse = (question) => ({
+  answer: [
+    "1. Intuition",
+    "I could not fully process that request, so here is a safe fallback response.",
+    "",
+    "2. How it works",
+    `Your question was: ${String(question ?? "").trim() || "No question provided."}`,
+    "",
+    "3. Deep dive",
+    "The tutor hit an internal issue while preparing context or saving conversation state.",
+    "",
+    "4. Common mistake",
+    "This usually happens when one backend step throws after the request starts.",
+    "",
+    "5. Final takeaway",
+    "Please try the question again. If it repeats, the backend logs now include the failing step.",
+  ].join("\n"),
+  sources: [],
+  tutorContext: {
+    inputAnalysis: {
+      intent: "new_question",
+      targetConcept: "",
+      confusionDetected: false,
+      confusionTopic: "",
+      misconceptionDetected: false,
+      misconceptionStatement: "",
+      followUpConfidence: 0,
+      needsClarification: false,
+      clarificationReason: "",
+      selfResolved: false,
+      explicitTopicShift: false,
+      questionAspects: [],
+      lowConfidence: true,
+    },
+    planner: {
+      mode: "fallback",
+      exactConceptToTeach: "",
+      explanationDepth: "beginner_full",
+      shouldZoomIn: false,
+      shouldClarify: false,
+      shouldAcknowledgeResolution: false,
+      shouldCorrectMisconception: false,
+      misconceptionToCorrect: "",
+      unresolvedConcepts: [],
+      activeConfusion: "",
+      weakAreaFocus: [],
+      refinement: null,
+    },
+    responseSummary: {
+      mainTopic: "",
+      conceptsExplained: [],
+      misconceptionAddressed: "",
+      remainingGaps: [],
+      lowConfidence: true,
+    },
+    verification: {
+      addressesTargetConcept: false,
+      resolvesActiveConfusion: true,
+      followsScaffoldStructure: true,
+      usesMultihopReasoning: false,
+      needsRegeneration: false,
+      correctionNotes: ["Emergency fallback response used because the backend hit an internal error."],
+      lowConfidence: true,
+    },
+    profile: DEFAULT_PROFILE,
+    memory: DEFAULT_MEMORY,
+  },
+});
+
 const generateTutorReply = async ({
   userId,
   question,
   documentId,
   refinement = null,
 }) => {
-  const documents = await prepareChunksForUser({ userId, documentId });
+  try {
+  const documents = await safeStep(
+    "document preparation",
+    () => prepareChunksForUser({ userId, documentId }),
+    []
+  );
   const relevantChunks = documents.length
-    ? await findRelevantChunks({
-        userId,
-        question,
-        documentId,
-        limit: 4,
-      })
+    ? await safeStep(
+        "chunk retrieval",
+        () => findRelevantChunks({
+          userId,
+          question,
+          documentId,
+          limit: 4,
+        }),
+        []
+      )
     : [];
 
-  const profile = await getStudentProfile(userId);
-  const memory = await getTutorMemory(userId);
-  const recentTurns = await getRecentChatTurns(userId, 6);
-  const inputAnalysis = await analyzeTutorInput({
-    question,
-    profile,
-    memory,
-    recentTurns,
-    refinement,
-  });
+  const profile = await safeStep("student profile lookup", () => getStudentProfile(userId), DEFAULT_PROFILE);
+  const memory = await safeStep("tutor memory lookup", () => getTutorMemory(userId), DEFAULT_MEMORY);
+  const recentTurns = await safeStep("recent turn lookup", () => getRecentChatTurns(userId, 6), []);
+  const inputAnalysis = await safeStep(
+    "input analysis",
+    () => analyzeTutorInput({
+      question,
+      profile,
+      memory,
+      recentTurns,
+      refinement,
+    }),
+    {
+      intent: refinement ? "follow_up" : "new_question",
+      targetConcept: "",
+      confusionDetected: false,
+      confusionTopic: "",
+      misconceptionDetected: false,
+      misconceptionStatement: "",
+      followUpConfidence: refinement ? 0.7 : 0.2,
+      needsClarification: false,
+      clarificationReason: "",
+      selfResolved: false,
+      explicitTopicShift: false,
+      questionAspects: [],
+      lowConfidence: true,
+    }
+  );
   const planner = buildTutorPlan({
     profile,
     memory,
@@ -141,11 +276,21 @@ const generateTutorReply = async ({
     }
   }
 
-  const responseSummary = await summarizeTutorResponse({
-    question,
-    answer,
-    inputAnalysis,
-  });
+  const responseSummary = await safeStep(
+    "response summary",
+    () => summarizeTutorResponse({
+      question,
+      answer,
+      inputAnalysis,
+    }),
+    {
+      mainTopic: planner.exactConceptToTeach || inputAnalysis.targetConcept || "",
+      conceptsExplained: planner.exactConceptToTeach ? [planner.exactConceptToTeach] : [],
+      misconceptionAddressed: planner.shouldCorrectMisconception ? planner.misconceptionToCorrect : "",
+      remainingGaps: [],
+      lowConfidence: true,
+    }
+  );
   const verifiedResponseSummary = {
     ...responseSummary,
     remainingGaps: verification.resolvesActiveConfusion
@@ -161,15 +306,19 @@ const generateTutorReply = async ({
     verification,
   });
 
-  await saveTutorTurn({
-    userId,
-    question,
-    answer,
-    inputAnalysis,
-    planner,
-    responseSummary: verifiedResponseSummary,
-    nextMemory,
-  });
+  await safeStep(
+    "turn persistence",
+    () => saveTutorTurn({
+      userId,
+      question,
+      answer,
+      inputAnalysis,
+      planner,
+      responseSummary: verifiedResponseSummary,
+      nextMemory,
+    }),
+    nextMemory
+  );
 
   return {
     answer,
@@ -183,13 +332,17 @@ const generateTutorReply = async ({
       memory: nextMemory,
     },
   };
+  } catch (error) {
+    console.error("[chat] generateTutorReply failed:", error);
+    return buildEmergencyTutorResponse(question);
+  }
 };
 
 export const askChatQuestion = async (req, res) => {
   try {
     const userId = req.user.id;
     const question = String(req.body?.question ?? "").trim();
-    const documentId = req.body?.documentId ? Number(req.body.documentId) : null;
+    const documentId = normalizeDocumentId(req.body?.documentId);
 
     if (!question) {
       return res.status(400).json({ error: "Question is required." });
@@ -204,7 +357,7 @@ export const askChatQuestion = async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Failed to answer the question." });
+    res.json(buildEmergencyTutorResponse(req.body?.question));
   }
 };
 
@@ -245,7 +398,7 @@ export const refineChatAnswer = async (req, res) => {
     const type = String(req.body?.type ?? "").trim().toLowerCase();
     const question = String(req.body?.question ?? "").trim();
     const answer = String(req.body?.answer ?? "").trim();
-    const documentId = req.body?.documentId ? Number(req.body.documentId) : null;
+    const documentId = normalizeDocumentId(req.body?.documentId);
 
     if (!["simplify", "analogy", "deeper"].includes(type)) {
       return res.status(400).json({ error: "Invalid refine type." });

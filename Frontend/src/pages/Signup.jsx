@@ -9,7 +9,7 @@ const getAuthErrorMessage = (error, fallbackMessage) => {
   }
 
   if (error?.code === "ERR_NETWORK") {
-    return "Backend server is not reachable. Start the backend on port 5000 and try again.";
+    return "Cannot reach the API. Make sure the backend is running on port 5000, or set VITE_API_BASE_URL if the frontend is hosted separately.";
   }
 
   return fallbackMessage;

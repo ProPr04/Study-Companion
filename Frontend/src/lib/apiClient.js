@@ -3,7 +3,26 @@ import axios from "axios";
 const TOKEN_KEY = "token";
 const USER_KEY = "user";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
+const resolveApiBaseUrl = () => {
+  const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL;
+
+  if (configuredBaseUrl) {
+    return configuredBaseUrl;
+  }
+
+  if (typeof window !== "undefined") {
+    const hostname = window.location.hostname;
+    const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1";
+
+    if (isLocalHost) {
+      return `http://${hostname}:5000/api`;
+    }
+  }
+
+  return "/api";
+};
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

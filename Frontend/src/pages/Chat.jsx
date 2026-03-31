@@ -8,6 +8,18 @@ const refineActions = [
   { type: "deeper", label: "Go Deeper" },
 ];
 
+const getChatErrorMessage = (error, fallbackMessage) => {
+  if (error?.response?.data?.error) {
+    return error.response.data.error;
+  }
+
+  if (error?.code === "ERR_NETWORK") {
+    return "Cannot reach the API. Make sure the backend is running on port 5000, or set VITE_API_BASE_URL if the frontend is hosted separately.";
+  }
+
+  return fallbackMessage;
+};
+
 export default function Chat() {
   const [documents, setDocuments] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
@@ -27,7 +39,7 @@ export default function Chat() {
         setDocuments(Array.isArray(res?.documents) ? res.documents : []);
       } catch (loadError) {
         console.error(loadError);
-        setError("Unable to load your uploaded documents for chat.");
+        setError(getChatErrorMessage(loadError, "Unable to load your uploaded documents for chat."));
       } finally {
         setDocumentsLoading(false);
       }
@@ -81,7 +93,7 @@ export default function Chat() {
       ]);
     } catch (sendError) {
       console.error(sendError);
-      setError(sendError?.response?.data?.error || "Could not get an answer right now.");
+      setError(getChatErrorMessage(sendError, "Could not get an answer right now."));
     } finally {
       setIsSending(false);
     }
@@ -120,7 +132,7 @@ export default function Chat() {
       ]);
     } catch (refineError) {
       console.error(refineError);
-      setError(refineError?.response?.data?.error || "Could not refine the answer right now.");
+      setError(getChatErrorMessage(refineError, "Could not refine the answer right now."));
       setRetryRefinePayload({ message, type });
     } finally {
       setRefiningState({ messageId: null, type: "" });

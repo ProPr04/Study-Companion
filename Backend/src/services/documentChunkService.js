@@ -141,12 +141,21 @@ export const prepareChunksForUser = async ({ userId, documentId = null }) => {
 
   const documentsResult = await pool.query(documentsQuery.text, documentsQuery.values);
   const documents = documentsResult.rows;
+  const healthyDocuments = [];
 
   for (const document of documents) {
-    await syncDocumentChunks(document);
+    try {
+      await syncDocumentChunks(document);
+      healthyDocuments.push(document);
+    } catch (error) {
+      console.error(
+        `Failed to prepare chunks for document ${document.id} (${document.file_name ?? "unknown"}).`,
+        error
+      );
+    }
   }
 
-  return documents;
+  return healthyDocuments;
 };
 
 export const findRelevantChunks = async ({

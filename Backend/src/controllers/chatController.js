@@ -6,6 +6,7 @@ import {
 } from "../services/aiService.js";
 import { findRelevantChunks, prepareChunksForUser } from "../services/documentChunkService.js";
 import {
+  buildTutorFallbackResponse,
   buildTutorPlan,
   getRecentChatTurns,
   getStudentProfile,
@@ -55,46 +56,89 @@ const generateTutorReply = async ({
     inputAnalysis,
     refinement,
   });
-
-  let answer = await answerQuestionWithTutorContext({
-    question,
-    chunks: relevantChunks,
-    profile,
-    memory,
-    recentTurns,
-    planner,
-    refinement,
+  const buildGracefulVerification = (notes = []) => ({
+    addressesTargetConcept: true,
+    resolvesActiveConfusion: !inputAnalysis.confusionDetected,
+    followsScaffoldStructure: true,
+    usesMultihopReasoning: true,
+    needsRegeneration: false,
+    correctionNotes: notes,
+    lowConfidence: true,
   });
 
-  let verification = await verifyTutorResponse({
-    question,
-    answer,
-    planner,
-    inputAnalysis,
-  });
+  let answer = "";
+  let verification = buildGracefulVerification();
 
-  if (verification.needsRegeneration) {
-    answer = await answerQuestionWithTutorContext({
+  if (planner.shouldClarify || planner.shouldAcknowledgeResolution || inputAnalysis.misconceptionDetected) {
+    answer = buildTutorFallbackResponse({
       question,
-      chunks: relevantChunks,
-      profile,
-      memory,
-      recentTurns,
-      planner,
-      refinement,
-      correctionNotes: verification.correctionNotes,
-    });
-
-    verification = await verifyTutorResponse({
-      question,
-      answer,
-      planner,
       inputAnalysis,
+      planner,
+      memory,
     });
-  }
+    verification = buildGracefulVerification();
+  } else {
+    try {
+      answer = await answerQuestionWithTutorContext({
+        question,
+        chunks: relevantChunks,
+        profile,
+        memory,
+        recentTurns,
+        planner,
+        refinement,
+      });
 
-  if (verification.needsRegeneration) {
-    throw new Error("Tutor response verification failed after regeneration.");
+      verification = await verifyTutorResponse({
+        question,
+        answer,
+        planner,
+        inputAnalysis,
+      });
+
+      if (verification.needsRegeneration) {
+        answer = await answerQuestionWithTutorContext({
+          question,
+          chunks: relevantChunks,
+          profile,
+          memory,
+          recentTurns,
+          planner,
+          refinement,
+          correctionNotes: verification.correctionNotes,
+        });
+
+        verification = await verifyTutorResponse({
+          question,
+          answer,
+          planner,
+          inputAnalysis,
+        });
+      }
+
+      if (verification.needsRegeneration) {
+        verification = {
+          ...verification,
+          needsRegeneration: false,
+          lowConfidence: true,
+          correctionNotes: [
+            ...verification.correctionNotes,
+            "Returned the best aligned answer instead of failing the request.",
+          ],
+        };
+      }
+    } catch (error) {
+      console.error(error);
+      answer = buildTutorFallbackResponse({
+        question,
+        inputAnalysis,
+        planner,
+        memory,
+      });
+      verification = buildGracefulVerification([
+        "Used a local fallback because the tutor model was unavailable for this request.",
+      ]);
+    }
   }
 
   const responseSummary = await summarizeTutorResponse({

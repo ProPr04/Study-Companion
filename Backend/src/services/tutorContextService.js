@@ -379,7 +379,6 @@ Refinement:
 Verifier notes:
 - ${correctionNotes.length ? correctionNotes.slice(0, 3).map((note) => limitText(note, 120)).join(" | ") : "none"}
 
-HEAD
 Rules:
 - If ambiguous, ask a short clarifying question.
 - If the student already resolved it, acknowledge and offer the next step.
@@ -417,7 +416,6 @@ Formatting:
   3. Deep dive
   4. Common mistake
   5. Final takeaway
- parent of 24b4c3d (all bugs are fixed)
 
 Context:
 ${context}

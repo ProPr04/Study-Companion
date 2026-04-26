@@ -178,7 +178,7 @@ export default function Quiz() {
           <div>
             <h1 className="app-title">Create a quiz directly from an uploaded document.</h1>
             <p className="app-subtitle">
-              Choose one upload, set the difficulty and question count, let Groq build the test from it,
+              Choose one upload, set the difficulty and question count, let the local Ollama model build the test from it,
               then complete the quiz in an interactive session with a final scorecard.
             </p>
           </div>

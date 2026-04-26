@@ -1,12 +1,40 @@
-import Groq from "groq-sdk";
 import "../config/env.js";
 import { chunkText } from "../utils/textProcessor.js";
 import { buildPrompt } from "../utils/buildPrompt.js";
 import { buildTutorPrompt } from "./tutorContextService.js";
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim();
+const OLLAMA_MODEL = (process.env.OLLAMA_MODEL || "gemma3:4b").trim();
+
+const chatWithOllama = async ({
+  messages,
+  temperature = 0.2,
+  format,
+}) => {
+  const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OLLAMA_MODEL,
+      stream: false,
+      messages,
+      options: {
+        temperature,
+      },
+      ...(format ? { format } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Ollama request failed (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data?.message?.content?.trim() ?? "";
+};
 
 export { buildPrompt };
 
@@ -27,8 +55,7 @@ const quizDifficultyConfig = {
 
 export const generateNotesFromChunk = async (chunk) => {
   try {
-    const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant", // fast + free tier friendly
+    return await chatWithOllama({
       messages: [
         {
           role: "system",
@@ -50,11 +77,8 @@ ${chunk}
       ],
       temperature: 0.5,
     });
-
-    return response.choices[0].message.content;
-
   } catch (error) {
-    console.error("Groq AI error:", error);
+    console.error("Ollama AI error:", error);
     throw new Error("AI generation failed");
   }
 };
@@ -73,8 +97,7 @@ const completeStructuredJson = async ({
   userContent,
   temperature = 0.1,
 }) => {
-  const response = await groq.chat.completions.create({
-    model: "llama-3.1-8b-instant",
+  const content = await chatWithOllama({
     temperature,
     messages: [
       {
@@ -86,9 +109,10 @@ const completeStructuredJson = async ({
         content: userContent,
       },
     ],
+    format: "json",
   });
 
-  return parseJsonResponse(response.choices?.[0]?.message?.content ?? "{}");
+  return parseJsonResponse(content || "{}");
 };
 
 const normalizeQuiz = (quiz, questionCount = 10) => {
@@ -121,8 +145,7 @@ const normalizeQuiz = (quiz, questionCount = 10) => {
 };
 
 const generateQuizSourceFromChunk = async (chunk, index, totalChunks) => {
-  const response = await groq.chat.completions.create({
-    model: "llama-3.1-8b-instant",
+  return chatWithOllama({
     temperature: 0.2,
     messages: [
       {
@@ -144,8 +167,6 @@ ${chunk}`,
       },
     ],
   });
-
-  return response.choices?.[0]?.message?.content?.trim() ?? "";
 };
 
 export const generateQuizFromText = async (
@@ -181,8 +202,7 @@ export const generateQuizFromText = async (
       throw new Error("No quiz source text could be prepared.");
     }
 
-    const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+    const content = await chatWithOllama({
       temperature: 0.3,
       messages: [
         {
@@ -215,9 +235,9 @@ Return JSON in this shape:
           content: `Generate a ${safeQuestionCount}-question ${difficultyConfig.label} quiz from this study material only:\n\n${sourceText}`,
         },
       ],
+      format: "json",
     });
 
-    const content = response.choices?.[0]?.message?.content ?? "";
     const parsedQuiz = parseJsonResponse(content);
     const normalizedQuiz = normalizeQuiz(parsedQuiz, safeQuestionCount);
 
@@ -231,7 +251,7 @@ Return JSON in this shape:
       questionCount: safeQuestionCount,
     };
   } catch (error) {
-    console.error("Groq quiz error:", error);
+    console.error("Ollama quiz error:", error);
     throw new Error("Quiz generation failed");
   }
 };
@@ -244,8 +264,7 @@ export const generateLevelBasedResponse = async ({
   try {
     const prompt = buildPrompt({ question, concepts, level });
 
-    const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+    const answer = await chatWithOllama({
       temperature: 0.3,
       messages: [
         {
@@ -261,10 +280,10 @@ export const generateLevelBasedResponse = async ({
 
     return {
       prompt,
-      answer: response.choices?.[0]?.message?.content?.trim() ?? "",
+      answer,
     };
   } catch (error) {
-    console.error("Groq adaptive response error:", error);
+    console.error("Ollama adaptive response error:", error);
     throw new Error("Adaptive response generation failed");
   }
 };
@@ -275,26 +294,31 @@ export const answerQuestionWithContext = async ({ question, chunks }) => {
       .map((chunk, index) => `Source ${index + 1}:\n${chunk.content}`)
       .join("\n\n")
       .slice(0, 12000);
+    const hasContext = Boolean(context.trim());
 
-    const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+    const answer = await chatWithOllama({
       temperature: 0.2,
       messages: [
         {
           role: "system",
-          content:
-            "You are a study assistant. Answer only from the provided context. If the answer is not in the context, say \"I don't know based on the provided documents.\"",
+          content: hasContext
+            ? "You are a study assistant. Answer only from the provided context. If the answer is not in the context, say \"I don't know based on the provided documents.\""
+            : "You are a concise study assistant. Answer the user's question directly in simple language.",
         },
         {
           role: "user",
-          content: `CONTEXT:\n${context}\n\nQUESTION: ${String(question ?? "").trim()}`,
+          content: hasContext
+            ? `CONTEXT:\n${context}\n\nQUESTION: ${String(question ?? "").trim()}`
+            : `QUESTION: ${String(question ?? "").trim()}`,
         },
       ],
     });
 
-    return response.choices?.[0]?.message?.content?.trim() ?? "I don't know based on the provided documents.";
+    return answer || (hasContext
+      ? "I don't know based on the provided documents."
+      : "I could not generate an answer right now.");
   } catch (error) {
-    console.error("Groq chat error:", error);
+    console.error("Ollama chat error:", error);
     throw new Error("Chat answer generation failed");
   }
 };
@@ -321,8 +345,7 @@ export const answerQuestionWithTutorContext = async ({
       correctionNotes,
     });
 
-    const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+    const answer = await chatWithOllama({
       temperature: 0.2,
       messages: [
         {
@@ -337,9 +360,9 @@ export const answerQuestionWithTutorContext = async ({
       ],
     });
 
-    return response.choices?.[0]?.message?.content?.trim() ?? "I don't know based on the provided documents.";
+    return answer || "I don't know based on the provided documents.";
   } catch (error) {
-    console.error("Groq tutor chat error:", error);
+    console.error("Ollama tutor chat error:", error);
     throw new Error("Tutor chat answer generation failed");
   }
 };
@@ -481,17 +504,14 @@ export const verifyTutorResponse = async ({
   const normalizedTargetConcept = String(
     planner?.exactConceptToTeach || inputAnalysis?.confusionTopic || inputAnalysis?.targetConcept || ""
   ).trim().toLowerCase();
+  const requiredSections = planner?.shouldZoomIn
+    ? ["quick bridge", "focus concept", "why it matters", "mini check"]
+    : ["intuition", "how it works", "deep dive", "common mistake", "final takeaway"];
   const deterministicChecks = {
     addressesTargetConcept: normalizedTargetConcept
       ? normalizedAnswer.includes(normalizedTargetConcept)
       : true,
-    followsScaffoldStructure: planner?.shouldZoomIn
-      ? ["quick bridge", "focus concept", "why it matters", "mini check"].every((section) =>
-          normalizedAnswer.includes(section)
-        )
-      : ["intuition", "how it works", "deep dive", "common mistake", "final takeaway"].every((section) =>
-          normalizedAnswer.includes(section)
-        ),
+    followsScaffoldStructure: requiredSections.every((section) => normalizedAnswer.includes(section)),
     followUpNarrowingOk: planner?.shouldZoomIn
       ? normalizedAnswer.includes("quick bridge") && normalizedAnswer.includes(normalizedTargetConcept)
       : true,
@@ -565,15 +585,37 @@ ${answer}`,
       lowConfidence: false,
     };
   } catch (error) {
+    const correctionNotes = [];
+
+    if (!deterministicChecks.addressesTargetConcept) {
+      correctionNotes.push(`Explicitly address the target concept: ${normalizedTargetConcept}.`);
+    }
+
+    if (!deterministicChecks.followsScaffoldStructure) {
+      correctionNotes.push(
+        planner?.shouldZoomIn
+          ? "Use the required follow-up sections: Quick bridge, Focus concept, Why it matters, Mini check."
+          : "Use the required scaffold sections: Intuition, How it works, Deep dive, Common mistake, Final takeaway."
+      );
+    }
+
+    if (planner?.shouldZoomIn && !deterministicChecks.followUpNarrowingOk) {
+      correctionNotes.push("Do not restart the full lesson. Narrow the answer to the active confusion topic.");
+    }
+
+    const structurallyUsable = deterministicChecks.addressesTargetConcept &&
+      deterministicChecks.followsScaffoldStructure &&
+      (!planner?.shouldZoomIn || deterministicChecks.followUpNarrowingOk);
+
     return {
       addressesTargetConcept: deterministicChecks.addressesTargetConcept,
       resolvesActiveConfusion: !planner?.shouldZoomIn || deterministicChecks.followUpNarrowingOk,
       followsScaffoldStructure: deterministicChecks.followsScaffoldStructure,
       usesMultihopReasoning: !planner?.shouldZoomIn || normalizedAnswer.includes("because"),
-      needsRegeneration: true,
-      correctionNotes: [
-        "Verification model failed. Regenerate using the required structure and target concept.",
-      ],
+      needsRegeneration: !structurallyUsable,
+      correctionNotes: correctionNotes.length
+        ? correctionNotes
+        : ["Verification model failed, but the response structure looks usable."],
       lowConfidence: true,
     };
   }
@@ -644,15 +686,16 @@ export const refineAnswerWithContext = async ({ type, answer, chunks }) => {
       .map((chunk, index) => `Source ${index + 1}:\n${chunk.content}`)
       .join("\n\n")
       .slice(0, 12000);
+    const hasContext = Boolean(context.trim());
 
-    const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+    const refinedAnswer = await chatWithOllama({
       temperature: 0.3,
       messages: [
         {
           role: "system",
-          content:
-            "Transform the original answer using only the provided context. If context is not enough, say \"Not enough information in the document\".",
+          content: hasContext
+            ? "Transform the original answer using only the provided context. If context is not enough, say \"Not enough information in the document\"."
+            : "Transform the original answer in the requested style while keeping the meaning accurate and clear.",
         },
         {
           role: "user",
@@ -664,9 +707,11 @@ export const refineAnswerWithContext = async ({ type, answer, chunks }) => {
       ],
     });
 
-    return response.choices?.[0]?.message?.content?.trim() ?? "Not enough information in the document";
+    return refinedAnswer || (hasContext
+      ? "Not enough information in the document"
+      : "I could not refine that answer right now.");
   } catch (error) {
-    console.error("Groq refine error:", error);
+    console.error("Ollama refine error:", error);
     throw new Error("Follow-up refinement failed");
   }
 };

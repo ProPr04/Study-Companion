@@ -147,8 +147,8 @@ export default function Chat() {
           <div>
             <h1 className="app-title">Ask questions about your own uploaded study material.</h1>
             <p className="app-subtitle">
-              This assistant answers only from the context retrieved from your uploaded
-              PDFs. If the answer is not found in those documents, it should say so.
+              This chat keeps things simple. Ask a question, and it will answer using the
+              most relevant uploaded document content when available.
             </p>
           </div>
           <div className="library-count-card">
@@ -176,8 +176,7 @@ export default function Chat() {
           <div className="quiz-sidebar-header">
             <h2 className="preview-title">Document scope</h2>
             <p className="preview-copy">
-              Ask across all uploads or narrow the tutor to one specific document. If no documents are available,
-              the assistant still uses your saved learner profile and recent conversation context.
+              Ask across all uploads or narrow the chat to one specific document.
             </p>
           </div>
 
@@ -200,7 +199,7 @@ export default function Chat() {
 
           {documents.length === 0 && !documentsLoading ? (
             <div className="status-banner info">
-              No uploaded documents yet. Chat will continue in profile-aware tutor mode.
+              No uploaded documents yet. The chat will answer more generally until you upload one.
             </div>
           ) : null}
         </section>
@@ -211,8 +210,7 @@ export default function Chat() {
               <div className="notes-placeholder">
                 <div>
                   <strong>Your study chat will appear here.</strong>
-                  Ask about a concept, definition, formula, or doubt. The tutor now keeps track of your learner
-                  profile, recent confusion, and follow-up questions across turns.
+                  Ask about a concept, definition, formula, or doubt, and the response will stay focused on that question.
                 </div>
               </div>
             ) : (
@@ -287,7 +285,7 @@ export default function Chat() {
               />
             <div className="chat-form-actions">
               <p className="chat-form-copy">
-                The tutor uses document context when available and falls back to your saved learning profile when not.
+                The chat uses matching document context when it finds it, then answers directly.
               </p>
               <button
                 type="submit"

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { askChatQuestion, fetchAllDocuments, refineChatAnswer } from "../api";
 import "../App.css";
 
@@ -20,6 +20,42 @@ const getChatErrorMessage = (error, fallbackMessage) => {
   return fallbackMessage;
 };
 
+function TypingText({ text, animate = false, speed = 36, onComplete }) {
+  const tokens = useMemo(() => String(text ?? "").split(/(\s+)/), [text]);
+  const [visibleCount, setVisibleCount] = useState(animate ? 0 : tokens.length);
+
+  useEffect(() => {
+    setVisibleCount(animate ? 0 : tokens.length);
+  }, [animate, tokens.length, text]);
+
+  useEffect(() => {
+    if (!animate) {
+      return undefined;
+    }
+
+    if (visibleCount >= tokens.length) {
+      onComplete?.();
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setVisibleCount((currentCount) => currentCount + 1);
+    }, speed);
+
+    return () => window.clearTimeout(timer);
+  }, [animate, onComplete, speed, tokens.length, visibleCount]);
+
+  const renderedText = tokens.slice(0, visibleCount).join("");
+  const isComplete = visibleCount >= tokens.length;
+
+  return (
+    <div className="chat-message-copy chat-message-typed">
+      {renderedText}
+      {animate && !isComplete ? <span className="chat-typing-cursor" aria-hidden="true" /> : null}
+    </div>
+  );
+}
+
 export default function Chat() {
   const [documents, setDocuments] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
@@ -30,6 +66,7 @@ export default function Chat() {
   const [isSending, setIsSending] = useState(false);
   const [refiningState, setRefiningState] = useState({ messageId: null, type: "" });
   const [retryRefinePayload, setRetryRefinePayload] = useState(null);
+  const [animatingMessageIds, setAnimatingMessageIds] = useState([]);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -50,7 +87,24 @@ export default function Chat() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isSending]);
+  }, [messages, isSending, animatingMessageIds]);
+
+  const registerAnimatingMessage = (messageId) => {
+    setAnimatingMessageIds((currentIds) =>
+      currentIds.includes(messageId) ? currentIds : [...currentIds, messageId]
+    );
+  };
+
+  const completeAnimatingMessage = (messageId) => {
+    setAnimatingMessageIds((currentIds) => currentIds.filter((id) => id !== messageId));
+    setMessages((currentMessages) =>
+      currentMessages.map((message) =>
+        message.id === messageId
+          ? { ...message, animate: false }
+          : message
+      )
+    );
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -80,15 +134,19 @@ export default function Chat() {
         documentId: selectedDocumentId === "all" ? undefined : Number(selectedDocumentId),
       });
 
+      const assistantMessageId = `assistant-${Date.now()}`;
+      registerAnimatingMessage(assistantMessageId);
+
       setMessages((currentMessages) => [
         ...currentMessages,
         {
-          id: `assistant-${Date.now()}`,
+          id: assistantMessageId,
           role: "assistant",
           content: res.answer,
           sources: Array.isArray(res.sources) ? res.sources : [],
           question: trimmedQuestion,
           documentId: selectedDocumentId === "all" ? null : Number(selectedDocumentId),
+          animate: true,
         },
       ]);
     } catch (sendError) {
@@ -118,16 +176,20 @@ export default function Chat() {
     try {
       const res = await refineChatAnswer(payload);
 
+      const assistantMessageId = `assistant-refine-${Date.now()}`;
+      registerAnimatingMessage(assistantMessageId);
+
       setMessages((currentMessages) => [
         ...currentMessages,
         {
-          id: `assistant-refine-${Date.now()}`,
+          id: assistantMessageId,
           role: "assistant",
           content: res.answer,
           sources: Array.isArray(res.sources) ? res.sources : [],
           question: message.question,
           documentId: message.documentId ?? null,
           refinementType: type,
+          animate: true,
         },
       ]);
     } catch (refineError) {
@@ -223,8 +285,16 @@ export default function Chat() {
                     <p className="app-meta-label">
                       {message.role === "user" ? "You" : "Study Assistant"}
                     </p>
-                    <div className="chat-message-copy">{message.content}</div>
-                    {message.role === "assistant" && message.sources?.length ? (
+                    {message.role === "assistant" ? (
+                      <TypingText
+                        text={message.content}
+                        animate={Boolean(message.animate)}
+                        onComplete={() => completeAnimatingMessage(message.id)}
+                      />
+                    ) : (
+                      <div className="chat-message-copy">{message.content}</div>
+                    )}
+                    {message.role === "assistant" && !message.animate && message.sources?.length ? (
                       <div className="chat-sources">
                         <p className="app-meta-label">Sources</p>
                         {message.sources.map((source) => (
@@ -235,7 +305,7 @@ export default function Chat() {
                         ))}
                       </div>
                     ) : null}
-                    {message.role === "assistant" ? (
+                    {message.role === "assistant" && !message.animate ? (
                       <div className="chat-message-actions">
                         {refineActions.map((action) => {
                           const isLoading =
@@ -251,6 +321,7 @@ export default function Chat() {
                               disabled={
                                 isSending ||
                                 Boolean(refiningState.messageId) ||
+                                animatingMessageIds.length > 0 ||
                                 !message.content ||
                                 !message.question
                               }
@@ -264,9 +335,19 @@ export default function Chat() {
                   </article>
                 ))}
                 {isSending ? (
-                  <article className="chat-message chat-message-assistant">
+                  <article className="chat-message chat-message-assistant chat-message-thinking">
                     <p className="app-meta-label">Study Assistant</p>
-                    <div className="chat-message-copy">Searching your documents and drafting an answer...</div>
+                    <div className="chat-thinking-row">
+                      <span className="chat-thinking-label">Thinking</span>
+                      <span className="chat-thinking-dots" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                    </div>
+                    <div className="chat-message-copy chat-thinking-copy">
+                      Searching your documents and preparing a response...
+                    </div>
                   </article>
                 ) : null}
                 <div ref={messagesEndRef} />
@@ -281,7 +362,7 @@ export default function Chat() {
               onChange={(event) => setQuestion(event.target.value)}
                 placeholder="Ask a question about your uploaded documents..."
                 rows={4}
-                disabled={isSending}
+                disabled={isSending || animatingMessageIds.length > 0}
               />
             <div className="chat-form-actions">
               <p className="chat-form-copy">
@@ -290,9 +371,9 @@ export default function Chat() {
               <button
                 type="submit"
                 className="primary-cta"
-                disabled={isSending}
+                disabled={isSending || animatingMessageIds.length > 0}
               >
-                {isSending ? "Sending..." : "Send"}
+                {isSending ? "Thinking..." : animatingMessageIds.length > 0 ? "Typing..." : "Send"}
               </button>
             </div>
           </form>
